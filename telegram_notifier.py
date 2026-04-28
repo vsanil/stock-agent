@@ -170,6 +170,63 @@ def format_daily_message(picks: dict, config: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Confirmation message (10:30 AM run) ──────────────────────────────────────
+
+def format_confirmation_message(picks: dict, current_prices: dict) -> str:
+    """
+    Build the 10:30 AM check-in message.
+    Compares entry prices from morning picks to current live prices.
+    current_prices: { "AAPL": 185.20, "BTC": 66200, ... }
+    """
+    now = date.today().strftime("%a %b %d")
+    stocks = picks.get("stocks", picks)
+    crypto = picks.get("crypto", {})
+
+    def price_line(symbol: str, entry: float, target: float, stop: float | None) -> str:
+        current = current_prices.get(symbol)
+        if current is None or entry is None:
+            return f"   {symbol}: <code>${entry}</code> → price unavailable"
+        pct = ((current - entry) / entry) * 100
+        arrow = "▲" if pct >= 0 else "▼"
+        if stop and current <= stop:
+            status = "🔴 STOP HIT"
+        elif pct >= ((target - entry) / entry * 100) * 0.5:
+            status = "✅ On track"
+        elif pct < -2:
+            status = "⚠️ Watch"
+        else:
+            status = "🟡 Neutral"
+        return f"   {symbol}: <code>${entry}</code> → <code>${round(current,2)}</code> {arrow}{abs(pct):.1f}% {status}"
+
+    lines = [
+        f"<b>🕙 10:30 AM Check — {now}</b>",
+        "",
+        "<b>📈 STOCK SHORT TERM</b>",
+    ]
+    for s in stocks.get("short_term", []):
+        lines.append(price_line(s.get("ticker",""), s.get("entry_price"), s.get("target_price"), s.get("stop_loss")))
+
+    lines += ["", "<b>🏦 STOCK LONG TERM</b>"]
+    for s in stocks.get("long_term", []):
+        lines.append(price_line(s.get("ticker",""), s.get("entry_price"), s.get("target_price"), None))
+
+    if crypto:
+        lines += ["", "<b>🪙 CRYPTO SHORT TERM</b>"]
+        for c in crypto.get("short_term", []):
+            lines.append(price_line(c.get("symbol",""), c.get("entry_price"), c.get("target_price"), c.get("stop_loss")))
+
+        lines += ["", "<b>💎 CRYPTO LONG TERM</b>"]
+        for c in crypto.get("long_term", []):
+            lines.append(price_line(c.get("symbol",""), c.get("entry_price"), c.get("target_price"), None))
+
+    lines += [
+        "",
+        "🔴 Stop hit — exit  ✅ On track — hold  ⚠️ Watch closely",
+        "<i>⚠️ Not financial advice.</i>",
+    ]
+    return "\n".join(lines)
+
+
 # ── Command handler ───────────────────────────────────────────────────────────
 
 def handle_incoming_command(message_text: str, chat_id: str | None = None) -> str:

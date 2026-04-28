@@ -1,8 +1,14 @@
 """
 agent.py — Main daily runner. Called by GitHub Actions cron job.
-Set DRY_RUN=true to print the Telegram message without sending it.
-Set DRY_RUN=true + MOCK_DATA=true to skip screeners entirely (fastest test).
-Runs stock screener + crypto screener, analyzes with Claude, sends Telegram message.
+
+Two run modes (auto-detected by ET time, or forced via RUN_MODE env var):
+  morning      → 8:00 AM ET  — full screener + Claude analysis + save picks
+  confirmation → 10:30 AM ET — fetch live prices, compare to morning picks
+
+Env vars:
+  DRY_RUN=true    → print message, don't send
+  MOCK_DATA=true  → skip live screeners (fast test)
+  RUN_MODE=morning|confirmation → override auto-detection
 """
 
 import os
@@ -11,18 +17,19 @@ from datetime import datetime
 
 import pytz
 
-from config_manager import get_config
+from config_manager import get_config, save_picks, load_picks
 from screener import run_screener
 from crypto_screener import run_crypto_screener
 from ai_analyzer import analyze_with_claude
-from telegram_notifier import format_daily_message, send_message
+from price_checker import get_current_prices
+from telegram_notifier import format_daily_message, format_confirmation_message, send_message
 
-ET = pytz.timezone("America/New_York")
+ET        = pytz.timezone("America/New_York")
 DRY_RUN   = os.environ.get("DRY_RUN",   "false").lower() == "true"
 MOCK_DATA = os.environ.get("MOCK_DATA", "false").lower() == "true"
 
 
-# ── Mock data for fast dry-run testing ───────────────────────────────────────
+# ── Mock data for fast testing ────────────────────────────────────────────────
 
 MOCK_STOCK_CANDIDATES = {
     "short_term": [
@@ -63,28 +70,28 @@ MOCK_CRYPTO_CANDIDATES = {
 }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Mode detection ────────────────────────────────────────────────────────────
 
-def main():
-    mode = "DRY RUN (mock data)" if (DRY_RUN and MOCK_DATA) else "DRY RUN" if DRY_RUN else "LIVE"
-    print(f"[agent] Starting [{mode}] at {datetime.now(ET).strftime('%Y-%m-%d %H:%M ET')}")
+def detect_run_mode(now_et: datetime) -> str:
+    """Auto-detect run mode by ET hour. Override with RUN_MODE env var."""
+    forced = os.environ.get("RUN_MODE", "").lower()
+    if forced in ("morning", "confirmation"):
+        return forced
+    return "morning" if now_et.hour < 10 else "confirmation"
 
-    config = get_config()
 
-    if not config.get("enabled", True):
-        print("[agent] Agent is paused (enabled=false in config). Skipping.")
-        return
+# ── Morning run ───────────────────────────────────────────────────────────────
 
-    now_et     = datetime.now(ET)
+def run_morning(config: dict, now_et: datetime):
+    """Full screener + Claude analysis + save picks + send morning message."""
     is_weekend = now_et.weekday() >= 5
 
     if is_weekend and not config.get("crypto_enabled", True):
         print("[agent] Weekend + crypto disabled. Nothing to run.")
         return
 
-    # ── Screeners (or mock data) ──────────────────────────────────────────────
     if MOCK_DATA:
-        print("[agent] Using mock data (MOCK_DATA=true) — skipping live screeners.")
+        print("[agent] Using mock data — skipping live screeners.")
         stock_candidates  = MOCK_STOCK_CANDIDATES
         crypto_candidates = MOCK_CRYPTO_CANDIDATES
     else:
@@ -96,8 +103,6 @@ def main():
             except Exception as exc:
                 print(f"[agent] Stock screener failed: {exc}")
                 _alert(f"⚠ Stock screener error: {exc}")
-        else:
-            print(f"[agent] {now_et.strftime('%A')} — skipping stocks (market closed).")
 
         crypto_candidates = {"short_term": [], "long_term": []}
         if config.get("crypto_enabled", True):
@@ -115,37 +120,83 @@ def main():
         _alert("⚠ Both screeners returned no candidates today. No picks sent.")
         return
 
-    # ── Claude analysis ───────────────────────────────────────────────────────
     print("[agent] Running Claude analysis...")
     try:
         picks = analyze_with_claude(
-            stock_candidates,
-            config,
+            stock_candidates, config,
             crypto_results=crypto_candidates if has_crypto else None,
         )
     except Exception as exc:
         print(f"[agent] Claude analysis failed: {exc}")
-        _alert("⚠ Agent error today. Claude analysis unavailable. Picks not sent.")
+        _alert("⚠ Agent error today. Claude analysis unavailable.")
         return
 
-    # ── Format + send ─────────────────────────────────────────────────────────
-    message = format_daily_message(picks, config)
+    # Save picks to Gist for 10:30 AM confirmation run
+    save_picks(picks)
 
+    message = format_daily_message(picks, config)
+    _send_or_print(message, label="8:00 AM Morning Briefing")
+
+
+# ── Confirmation run ──────────────────────────────────────────────────────────
+
+def run_confirmation():
+    """Load morning picks, fetch live prices, send comparison message."""
+    print("[agent] Loading morning picks from Gist...")
+    picks = load_picks()
+
+    if not picks:
+        print("[agent] No picks found for today — skipping confirmation.")
+        return
+
+    print("[agent] Fetching current prices...")
+    try:
+        current_prices = get_current_prices(picks)
+    except Exception as exc:
+        print(f"[agent] Price fetch failed: {exc}")
+        _alert("⚠ Could not fetch prices for 10:30 AM check.")
+        return
+
+    message = format_confirmation_message(picks, current_prices)
+    _send_or_print(message, label="10:30 AM Confirmation")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    now_et = datetime.now(ET)
+    mode   = detect_run_mode(now_et)
+
+    print(f"[agent] Starting [{mode.upper()}{'  DRY RUN' if DRY_RUN else ''}] "
+          f"at {now_et.strftime('%Y-%m-%d %H:%M ET')}")
+
+    config = get_config()
+    if not config.get("enabled", True):
+        print("[agent] Agent is paused. Skipping.")
+        return
+
+    if mode == "morning":
+        run_morning(config, now_et)
+    else:
+        run_confirmation()
+
+    print(f"[agent] Done ({mode}) for {now_et.strftime('%Y-%m-%d')}.")
+
+
+def _send_or_print(message: str, label: str = ""):
     if DRY_RUN:
-        print("\n" + "=" * 60)
-        print("DRY RUN — Telegram message (not sent):")
+        print(f"\n{'=' * 60}")
+        print(f"DRY RUN — {label} (not sent):")
         print("=" * 60)
         print(message)
-        print(f"\nMessage length: {len(message)} chars")
+        print(f"\nLength: {len(message)} chars")
         print("=" * 60)
     else:
-        print("[agent] Sending Telegram message...")
+        print(f"[agent] Sending {label} to Telegram...")
         success = send_message(message)
         if not success:
             print("[agent] WARNING: Message failed to send.")
             sys.exit(1)
-
-    print(f"[agent] Done. Picks processed for {now_et.strftime('%Y-%m-%d')}.")
 
 
 def _alert(text: str):
@@ -159,7 +210,7 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         import traceback
-        print(f"⚠ Unhandled agent error: {exc}\n{traceback.format_exc()}")
+        print(f"⚠ Unhandled error: {exc}\n{traceback.format_exc()}")
         if not DRY_RUN:
             send_message(f"⚠ Agent crashed: {exc}. Check GitHub Actions logs.")
         sys.exit(1)

@@ -25,7 +25,8 @@ DEFAULT_CONFIG = {
     "max_crypto_long_picks": 2,
 }
 
-GIST_FILENAME = "config.json"
+GIST_FILENAME  = "config.json"
+PICKS_FILENAME = "picks.json"     # Stores morning picks for 10:30 AM confirmation
 
 
 def _gist_headers() -> dict:
@@ -82,6 +83,51 @@ def reset_config() -> dict:
     """Restore config.json on the Gist to DEFAULT_CONFIG. Returns defaults."""
     _write_config(DEFAULT_CONFIG)
     return dict(DEFAULT_CONFIG)
+
+
+# ── Picks storage (for 10:30 AM confirmation run) ────────────────────────────
+
+def save_picks(picks: dict) -> None:
+    """Save morning picks to Gist as picks.json for the confirmation run."""
+    from datetime import date
+    picks["_saved_date"] = date.today().isoformat()
+    url = f"https://api.github.com/gists/{_gist_id()}"
+    payload = {
+        "files": {
+            PICKS_FILENAME: {
+                "content": json.dumps(picks, indent=2)
+            }
+        }
+    }
+    try:
+        resp = requests.patch(url, headers=_gist_headers(), json=payload, timeout=10)
+        resp.raise_for_status()
+        print("[config_manager] Morning picks saved to Gist.")
+    except Exception as exc:
+        print(f"[config_manager] WARNING: Could not save picks ({exc}).")
+
+
+def load_picks() -> dict | None:
+    """Load today's morning picks from Gist. Returns None if not found or stale."""
+    from datetime import date
+    try:
+        url = f"https://api.github.com/gists/{_gist_id()}"
+        resp = requests.get(url, headers=_gist_headers(), timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        files = data.get("files", {})
+        if PICKS_FILENAME not in files:
+            return None
+        raw   = files[PICKS_FILENAME]["content"]
+        picks = json.loads(raw)
+        # Only return picks saved today
+        if picks.get("_saved_date") != date.today().isoformat():
+            print("[config_manager] Picks are from a previous day — skipping confirmation.")
+            return None
+        return picks
+    except Exception as exc:
+        print(f"[config_manager] WARNING: Could not load picks ({exc}).")
+        return None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
