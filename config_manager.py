@@ -29,7 +29,7 @@ GIST_FILENAME = "config.json"
 
 
 def _gist_headers() -> dict:
-    token = os.environ.get("GITHUB_GIST_TOKEN", "")
+    token = os.environ.get("GH_GIST_TOKEN", "")
     return {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github+json",

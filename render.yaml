@@ -10,13 +10,11 @@ services:
         sync: false
       - key: FINNHUB_API_KEY
         sync: false
-      - key: CALLMEBOT_PHONE
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: CALLMEBOT_APIKEY
+      - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: GITHUB_GIST_TOKEN
+      - key: GH_GIST_TOKEN
         sync: false
       - key: GIST_ID
-        sync: false
-      - key: WEBHOOK_SECRET
         sync: false

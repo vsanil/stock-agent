@@ -1,53 +1,47 @@
 """
-webhook.py — Flask app to receive inbound WhatsApp commands via CallMeBot webhook.
-Deploy to Render.com free tier.
+webhook.py — Flask app to receive Telegram bot updates via webhook.
+Deploy to Render.com free tier. After deploying, register the webhook URL once:
+
+    python webhook.py --set-webhook https://your-render-url.onrender.com/webhook
+
+Or call the /register endpoint manually.
 """
 
 import os
+import sys
+import requests
 from flask import Flask, request, jsonify
 
 from config_manager import get_config
-from whatsapp import handle_incoming_command
+from telegram_notifier import handle_incoming_command, set_webhook
 
 app = Flask(__name__)
 
 
-def _verify_secret(req) -> bool:
-    """Check WEBHOOK_SECRET in header or query param."""
-    expected = os.environ.get("WEBHOOK_SECRET", "")
-    if not expected:
-        # If no secret is set, allow all (not recommended for production)
-        return True
-    provided = (
-        req.headers.get("X-Webhook-Secret")
-        or req.args.get("secret")
-        or (req.json or {}).get("secret", "")
-        if req.is_json else req.form.get("secret", "")
-    )
-    return provided == expected
-
+# ── Telegram webhook receiver ─────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Receive inbound WhatsApp command from CallMeBot."""
-    if not _verify_secret(request):
-        return jsonify({"error": "Unauthorized"}), 401
+    """Receive Telegram update (message from user to bot)."""
+    data = request.get_json(silent=True) or {}
 
-    # Extract message text from JSON body or form data
-    text = ""
-    if request.is_json:
-        data = request.get_json(silent=True) or {}
-        text = data.get("text", "") or data.get("message", "")
-    else:
-        text = request.form.get("text", "") or request.form.get("message", "")
+    # Extract message text and chat_id from Telegram update format
+    message = data.get("message") or data.get("edited_message", {})
+    if not message:
+        return jsonify({"status": "ignored", "reason": "no message"}), 200
 
-    if not text:
-        return jsonify({"error": "No text field found in request"}), 400
+    text    = message.get("text", "").strip()
+    chat_id = str(message.get("chat", {}).get("id", ""))
 
-    print(f"[webhook] Received command: {text!r}")
-    reply = handle_incoming_command(text)
+    if not text or not chat_id:
+        return jsonify({"status": "ignored", "reason": "empty text or chat_id"}), 200
+
+    print(f"[webhook] Received from {chat_id}: {text!r}")
+    reply = handle_incoming_command(text, chat_id=chat_id)
     return jsonify({"status": "ok", "reply": reply}), 200
 
+
+# ── Health check ──────────────────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -59,11 +53,38 @@ def health():
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
 
+# ── One-time webhook registration ─────────────────────────────────────────────
+
+@app.route("/register", methods=["GET"])
+def register():
+    """
+    Call this once after deploying to Render to register the Telegram webhook.
+    e.g. https://your-app.onrender.com/register?url=https://your-app.onrender.com/webhook
+    """
+    webhook_url = request.args.get("url", "")
+    if not webhook_url:
+        host = request.host_url.rstrip("/")
+        webhook_url = f"{host}/webhook"
+    ok = set_webhook(webhook_url)
+    return jsonify({"registered": ok, "webhook_url": webhook_url}), 200 if ok else 500
+
+
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"service": "Stock Agent Webhook", "status": "running"}), 200
+    return jsonify({"service": "Stock Agent Telegram Webhook", "status": "running"}), 200
 
+
+# ── CLI webhook registration ──────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    if "--set-webhook" in sys.argv:
+        idx = sys.argv.index("--set-webhook")
+        url = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
+        if not url:
+            print("Usage: python webhook.py --set-webhook https://your-app.onrender.com/webhook")
+            sys.exit(1)
+        success = set_webhook(url)
+        sys.exit(0 if success else 1)
+
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

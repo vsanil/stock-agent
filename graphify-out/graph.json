@@ -89,45 +89,45 @@
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L49",
-      "id": "stock_agent_config_manager_rationale_49",
       "community": 0,
-      "norm_label": "fetch config.json from github gist. falls back to default_config on error."
+      "norm_label": "fetch config.json from github gist. falls back to default_config on error.",
+      "id": "stock_agent_config_manager_rationale_49"
     },
     {
       "label": "Patch a single key in config.json on the Gist. Returns updated config.",
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L66",
-      "id": "stock_agent_config_manager_rationale_66",
       "community": 0,
-      "norm_label": "patch a single key in config.json on the gist. returns updated config."
+      "norm_label": "patch a single key in config.json on the gist. returns updated config.",
+      "id": "stock_agent_config_manager_rationale_66"
     },
     {
       "label": "Patch multiple keys at once. Returns updated config.",
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L74",
-      "id": "stock_agent_config_manager_rationale_74",
       "community": 0,
-      "norm_label": "patch multiple keys at once. returns updated config."
+      "norm_label": "patch multiple keys at once. returns updated config.",
+      "id": "stock_agent_config_manager_rationale_74"
     },
     {
       "label": "Restore config.json on the Gist to DEFAULT_CONFIG. Returns defaults.",
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L82",
-      "id": "stock_agent_config_manager_rationale_82",
       "community": 0,
-      "norm_label": "restore config.json on the gist to default_config. returns defaults."
+      "norm_label": "restore config.json on the gist to default_config. returns defaults.",
+      "id": "stock_agent_config_manager_rationale_82"
     },
     {
       "label": "Write config dict to the Gist as config.json.",
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L90",
-      "id": "stock_agent_config_manager_rationale_90",
       "community": 0,
-      "norm_label": "write config dict to the gist as config.json."
+      "norm_label": "write config dict to the gist as config.json.",
+      "id": "stock_agent_config_manager_rationale_90"
     },
     {
       "label": "whatsapp.py",
@@ -197,36 +197,36 @@
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L24",
-      "id": "stock_agent_whatsapp_rationale_24",
       "community": 2,
-      "norm_label": "send a whatsapp message via callmebot.     truncates to 1500 chars. retries up t"
+      "norm_label": "send a whatsapp message via callmebot.     truncates to 1500 chars. retries up t",
+      "id": "stock_agent_whatsapp_rationale_24"
     },
     {
       "label": "Build the formatted daily WhatsApp message from Claude picks (stocks + crypto).",
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L69",
-      "id": "stock_agent_whatsapp_rationale_69",
       "community": 2,
-      "norm_label": "build the formatted daily whatsapp message from claude picks (stocks + crypto)."
+      "norm_label": "build the formatted daily whatsapp message from claude picks (stocks + crypto).",
+      "id": "stock_agent_whatsapp_rationale_69"
     },
     {
       "label": "Parse and execute a WhatsApp command string.     Sends a confirmation message ba",
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L157",
-      "id": "stock_agent_whatsapp_rationale_157",
       "community": 2,
-      "norm_label": "parse and execute a whatsapp command string.     sends a confirmation message ba"
+      "norm_label": "parse and execute a whatsapp command string.     sends a confirmation message ba",
+      "id": "stock_agent_whatsapp_rationale_157"
     },
     {
       "label": "Parse command and return reply string.",
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L168",
-      "id": "stock_agent_whatsapp_rationale_168",
       "community": 0,
-      "norm_label": "parse command and return reply string."
+      "norm_label": "parse command and return reply string.",
+      "id": "stock_agent_whatsapp_rationale_168"
     },
     {
       "label": "webhook.py",
@@ -234,43 +234,43 @@
       "source_file": "webhook.py",
       "source_location": "L1",
       "id": "webhook_py",
-      "community": 5,
+      "community": 6,
       "norm_label": "webhook.py"
-    },
-    {
-      "label": "_verify_secret()",
-      "file_type": "code",
-      "source_file": "webhook.py",
-      "source_location": "L15",
-      "id": "stock_agent_webhook_verify_secret",
-      "community": 5,
-      "norm_label": "_verify_secret()"
     },
     {
       "label": "webhook()",
       "file_type": "code",
       "source_file": "webhook.py",
-      "source_location": "L31",
+      "source_location": "L24",
       "id": "stock_agent_webhook_webhook",
-      "community": 5,
+      "community": 6,
       "norm_label": "webhook()"
     },
     {
       "label": "health()",
       "file_type": "code",
       "source_file": "webhook.py",
-      "source_location": "L53",
+      "source_location": "L47",
       "id": "stock_agent_webhook_health",
-      "community": 5,
+      "community": 6,
       "norm_label": "health()"
+    },
+    {
+      "label": "register()",
+      "file_type": "code",
+      "source_file": "webhook.py",
+      "source_location": "L59",
+      "id": "stock_agent_webhook_register",
+      "community": 6,
+      "norm_label": "register()"
     },
     {
       "label": "index()",
       "file_type": "code",
       "source_file": "webhook.py",
-      "source_location": "L63",
+      "source_location": "L73",
       "id": "stock_agent_webhook_index",
-      "community": 5,
+      "community": 6,
       "norm_label": "index()"
     },
     {
@@ -278,36 +278,36 @@
       "file_type": "rationale",
       "source_file": "webhook.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 6,
       "norm_label": "webhook.py \u2014 flask app to receive inbound whatsapp commands via callmebot webhoo",
       "id": "stock_agent_webhook_rationale_1"
     },
     {
-      "label": "Check WEBHOOK_SECRET in header or query param.",
+      "label": "Receive Telegram update (message from user to bot).",
       "file_type": "rationale",
       "source_file": "webhook.py",
-      "source_location": "L16",
-      "community": 5,
-      "norm_label": "check webhook_secret in header or query param.",
-      "id": "stock_agent_webhook_rationale_16"
-    },
-    {
-      "label": "Receive inbound WhatsApp command from CallMeBot.",
-      "file_type": "rationale",
-      "source_file": "webhook.py",
-      "source_location": "L32",
-      "community": 5,
-      "norm_label": "receive inbound whatsapp command from callmebot.",
-      "id": "stock_agent_webhook_rationale_32"
+      "source_location": "L25",
+      "id": "stock_agent_webhook_rationale_25",
+      "community": 6,
+      "norm_label": "receive telegram update (message from user to bot)."
     },
     {
       "label": "Health check \u2014 returns current config.",
       "file_type": "rationale",
       "source_file": "webhook.py",
-      "source_location": "L54",
-      "community": 5,
-      "norm_label": "health check \u2014 returns current config.",
-      "id": "stock_agent_webhook_rationale_54"
+      "source_location": "L48",
+      "id": "stock_agent_webhook_rationale_48",
+      "community": 6,
+      "norm_label": "health check \u2014 returns current config."
+    },
+    {
+      "label": "Call this once after deploying to Render to register the Telegram webhook.     e",
+      "file_type": "rationale",
+      "source_file": "webhook.py",
+      "source_location": "L60",
+      "id": "stock_agent_webhook_rationale_60",
+      "community": 6,
+      "norm_label": "call this once after deploying to render to register the telegram webhook.     e"
     },
     {
       "label": "screener.py",
@@ -315,7 +315,7 @@
       "source_file": "screener.py",
       "source_location": "L1",
       "id": "screener_py",
-      "community": 4,
+      "community": 5,
       "norm_label": "screener.py"
     },
     {
@@ -324,7 +324,7 @@
       "source_file": "screener.py",
       "source_location": "L35",
       "id": "stock_agent_screener_get_sp500_tickers",
-      "community": 4,
+      "community": 5,
       "norm_label": "get_sp500_tickers()"
     },
     {
@@ -333,7 +333,7 @@
       "source_file": "screener.py",
       "source_location": "L56",
       "id": "stock_agent_screener_short_term_score",
-      "community": 4,
+      "community": 5,
       "norm_label": "_short_term_score()"
     },
     {
@@ -342,7 +342,7 @@
       "source_file": "screener.py",
       "source_location": "L125",
       "id": "stock_agent_screener_long_term_score",
-      "community": 4,
+      "community": 5,
       "norm_label": "_long_term_score()"
     },
     {
@@ -351,7 +351,7 @@
       "source_file": "screener.py",
       "source_location": "L168",
       "id": "stock_agent_screener_run_screener",
-      "community": 4,
+      "community": 5,
       "norm_label": "run_screener()"
     },
     {
@@ -359,7 +359,7 @@
       "file_type": "rationale",
       "source_file": "screener.py",
       "source_location": "L1",
-      "community": 4,
+      "community": 5,
       "norm_label": "screener.py \u2014 s&p 500 stock screener using yfinance + pandas-ta. returns top 5 s",
       "id": "stock_agent_screener_rationale_1"
     },
@@ -368,7 +368,7 @@
       "file_type": "rationale",
       "source_file": "screener.py",
       "source_location": "L36",
-      "community": 4,
+      "community": 5,
       "norm_label": "pull s&p 500 tickers from wikipedia.",
       "id": "stock_agent_screener_rationale_36"
     },
@@ -377,7 +377,7 @@
       "file_type": "rationale",
       "source_file": "screener.py",
       "source_location": "L57",
-      "community": 4,
+      "community": 5,
       "norm_label": "score a ticker for short-term trading (out of 100). returns (score, metrics).",
       "id": "stock_agent_screener_rationale_57"
     },
@@ -386,7 +386,7 @@
       "file_type": "rationale",
       "source_file": "screener.py",
       "source_location": "L126",
-      "community": 4,
+      "community": 5,
       "norm_label": "score a ticker for long-term investing (out of 100). returns (score, metrics).",
       "id": "stock_agent_screener_rationale_126"
     },
@@ -395,7 +395,7 @@
       "file_type": "rationale",
       "source_file": "screener.py",
       "source_location": "L169",
-      "community": 4,
+      "community": 5,
       "norm_label": "screen s&p 500 stocks and return top candidates.     returns:         {",
       "id": "stock_agent_screener_rationale_169"
     },
@@ -494,27 +494,27 @@
       "file_type": "rationale",
       "source_file": "ai_analyzer.py",
       "source_location": "L86",
-      "id": "stock_agent_ai_analyzer_rationale_86",
       "community": 3,
-      "norm_label": "format crypto screener results for the claude prompt."
+      "norm_label": "format crypto screener results for the claude prompt.",
+      "id": "stock_agent_ai_analyzer_rationale_86"
     },
     {
       "label": "Call Claude API and parse JSON response. Raises on failure.",
       "file_type": "rationale",
       "source_file": "ai_analyzer.py",
       "source_location": "L222",
-      "id": "stock_agent_ai_analyzer_rationale_222",
       "community": 3,
-      "norm_label": "call claude api and parse json response. raises on failure."
+      "norm_label": "call claude api and parse json response. raises on failure.",
+      "id": "stock_agent_ai_analyzer_rationale_222"
     },
     {
       "label": "Main entry point. Accepts stock screener output + optional crypto screener outpu",
       "file_type": "rationale",
       "source_file": "ai_analyzer.py",
       "source_location": "L246",
-      "id": "stock_agent_ai_analyzer_rationale_246",
       "community": 3,
-      "norm_label": "main entry point. accepts stock screener output + optional crypto screener outpu"
+      "norm_label": "main entry point. accepts stock screener output + optional crypto screener outpu",
+      "id": "stock_agent_ai_analyzer_rationale_246"
     },
     {
       "label": "crypto_screener.py",
@@ -593,72 +593,72 @@
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L1",
-      "id": "stock_agent_crypto_screener_rationale_1",
       "community": 1,
-      "norm_label": "crypto_screener.py \u2014 crypto screener using coingecko free api (no key needed). r"
+      "norm_label": "crypto_screener.py \u2014 crypto screener using coingecko free api (no key needed). r",
+      "id": "stock_agent_crypto_screener_rationale_1"
     },
     {
       "label": "Fetch top coins by market cap from CoinGecko /coins/markets.",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L27",
-      "id": "stock_agent_crypto_screener_rationale_27",
       "community": 1,
-      "norm_label": "fetch top coins by market cap from coingecko /coins/markets."
+      "norm_label": "fetch top coins by market cap from coingecko /coins/markets.",
+      "id": "stock_agent_crypto_screener_rationale_27"
     },
     {
       "label": "Fetch historical OHLC-style price data for RSI/MA calculation.",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L43",
-      "id": "stock_agent_crypto_screener_rationale_43",
       "community": 1,
-      "norm_label": "fetch historical ohlc-style price data for rsi/ma calculation."
+      "norm_label": "fetch historical ohlc-style price data for rsi/ma calculation.",
+      "id": "stock_agent_crypto_screener_rationale_43"
     },
     {
       "label": "Compute RSI from a list of daily closing prices.",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L54",
-      "id": "stock_agent_crypto_screener_rationale_54",
       "community": 1,
-      "norm_label": "compute rsi from a list of daily closing prices."
+      "norm_label": "compute rsi from a list of daily closing prices.",
+      "id": "stock_agent_crypto_screener_rationale_54"
     },
     {
       "label": "Simple moving average over last `period` prices.",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L67",
-      "id": "stock_agent_crypto_screener_rationale_67",
       "community": 1,
-      "norm_label": "simple moving average over last `period` prices."
+      "norm_label": "simple moving average over last `period` prices.",
+      "id": "stock_agent_crypto_screener_rationale_67"
     },
     {
       "label": "Score a coin for short-term trading (out of 100).",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L76",
-      "id": "stock_agent_crypto_screener_rationale_76",
       "community": 1,
-      "norm_label": "score a coin for short-term trading (out of 100)."
+      "norm_label": "score a coin for short-term trading (out of 100).",
+      "id": "stock_agent_crypto_screener_rationale_76"
     },
     {
       "label": "Score a coin for long-term holding (out of 100).",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L122",
-      "id": "stock_agent_crypto_screener_rationale_122",
       "community": 1,
-      "norm_label": "score a coin for long-term holding (out of 100)."
+      "norm_label": "score a coin for long-term holding (out of 100).",
+      "id": "stock_agent_crypto_screener_rationale_122"
     },
     {
       "label": "Screen top 100 crypto coins and return top candidates.     Returns:         {",
       "file_type": "rationale",
       "source_file": "crypto_screener.py",
       "source_location": "L166",
-      "id": "stock_agent_crypto_screener_rationale_166",
       "community": 1,
-      "norm_label": "screen top 100 crypto coins and return top candidates.     returns:         {"
+      "norm_label": "screen top 100 crypto coins and return top candidates.     returns:         {",
+      "id": "stock_agent_crypto_screener_rationale_166"
     },
     {
       "label": "agent.py",
@@ -701,16 +701,178 @@
       "file_type": "rationale",
       "source_file": "agent.py",
       "source_location": "L106",
-      "id": "stock_agent_agent_rationale_106",
       "community": 2,
-      "norm_label": "send an error alert via whatsapp (unless dry_run)."
+      "norm_label": "send an error alert via whatsapp (unless dry_run).",
+      "id": "stock_agent_agent_rationale_106"
+    },
+    {
+      "label": "telegram_notifier.py",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L1",
+      "id": "telegram_notifier_py",
+      "community": 4,
+      "norm_label": "telegram_notifier.py"
+    },
+    {
+      "label": "_bot_token()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L21",
+      "id": "stock_agent_telegram_notifier_bot_token",
+      "community": 4,
+      "norm_label": "_bot_token()"
+    },
+    {
+      "label": "_chat_id()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L27",
+      "id": "stock_agent_telegram_notifier_chat_id",
+      "community": 4,
+      "norm_label": "_chat_id()"
+    },
+    {
+      "label": "send_message()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L34",
+      "id": "stock_agent_telegram_notifier_send_message",
+      "community": 4,
+      "norm_label": "send_message()"
+    },
+    {
+      "label": "set_webhook()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L72",
+      "id": "stock_agent_telegram_notifier_set_webhook",
+      "community": 4,
+      "norm_label": "set_webhook()"
+    },
+    {
+      "label": "_stars()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L87",
+      "id": "stock_agent_telegram_notifier_stars",
+      "community": 4,
+      "norm_label": "_stars()"
+    },
+    {
+      "label": "format_daily_message()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L92",
+      "id": "stock_agent_telegram_notifier_format_daily_message",
+      "community": 4,
+      "norm_label": "format_daily_message()"
+    },
+    {
+      "label": "handle_incoming_command()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L175",
+      "id": "stock_agent_telegram_notifier_handle_incoming_command",
+      "community": 4,
+      "norm_label": "handle_incoming_command()"
+    },
+    {
+      "label": "_parse_and_execute()",
+      "file_type": "code",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L183",
+      "id": "stock_agent_telegram_notifier_parse_and_execute",
+      "community": 0,
+      "norm_label": "_parse_and_execute()"
+    },
+    {
+      "label": "telegram_notifier.py \u2014 Telegram Bot send/receive helpers + command parser. Repla",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L1",
+      "id": "stock_agent_telegram_notifier_rationale_1",
+      "community": 4,
+      "norm_label": "telegram_notifier.py \u2014 telegram bot send/receive helpers + command parser. repla"
+    },
+    {
+      "label": "Send a Telegram message. Splits messages > 4096 chars automatically.     Retries",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L35",
+      "id": "stock_agent_telegram_notifier_rationale_35",
+      "community": 4,
+      "norm_label": "send a telegram message. splits messages > 4096 chars automatically.     retries"
+    },
+    {
+      "label": "Register a Telegram webhook URL (call once after deploying to Render).",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L73",
+      "id": "stock_agent_telegram_notifier_rationale_73",
+      "community": 4,
+      "norm_label": "register a telegram webhook url (call once after deploying to render)."
+    },
+    {
+      "label": "Build the formatted daily Telegram message from Claude picks (stocks + crypto).",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L93",
+      "id": "stock_agent_telegram_notifier_rationale_93",
+      "community": 4,
+      "norm_label": "build the formatted daily telegram message from claude picks (stocks + crypto)."
+    },
+    {
+      "label": "Parse and execute a Telegram command. Sends reply and returns reply text.",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L176",
+      "id": "stock_agent_telegram_notifier_rationale_176",
+      "community": 4,
+      "norm_label": "parse and execute a telegram command. sends reply and returns reply text."
+    },
+    {
+      "label": "Parse command string and return reply.",
+      "file_type": "rationale",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L184",
+      "id": "stock_agent_telegram_notifier_rationale_184",
+      "community": 0,
+      "norm_label": "parse command string and return reply."
+    },
+    {
+      "label": "Check WEBHOOK_SECRET in header or query param.",
+      "file_type": "rationale",
+      "source_file": "webhook.py",
+      "source_location": "L16",
+      "community": 7,
+      "norm_label": "check webhook_secret in header or query param.",
+      "id": "stock_agent_webhook_rationale_16"
+    },
+    {
+      "label": "Receive inbound WhatsApp command from CallMeBot.",
+      "file_type": "rationale",
+      "source_file": "webhook.py",
+      "source_location": "L32",
+      "community": 8,
+      "norm_label": "receive inbound whatsapp command from callmebot.",
+      "id": "stock_agent_webhook_rationale_32"
+    },
+    {
+      "label": "Health check \u2014 returns current config.",
+      "file_type": "rationale",
+      "source_file": "webhook.py",
+      "source_location": "L54",
+      "community": 9,
+      "norm_label": "health check \u2014 returns current config.",
+      "id": "stock_agent_webhook_rationale_54"
     },
     {
       "label": "Fetch config.json from GitHub Gist. Falls back to DEFAULT_CONFIG on error.",
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L43",
-      "community": 6,
+      "community": 10,
       "norm_label": "fetch config.json from github gist. falls back to default_config on error.",
       "id": "stock_agent_config_manager_rationale_43"
     },
@@ -719,7 +881,7 @@
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L60",
-      "community": 7,
+      "community": 11,
       "norm_label": "patch a single key in config.json on the gist. returns updated config.",
       "id": "stock_agent_config_manager_rationale_60"
     },
@@ -728,7 +890,7 @@
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L68",
-      "community": 8,
+      "community": 12,
       "norm_label": "patch multiple keys at once. returns updated config.",
       "id": "stock_agent_config_manager_rationale_68"
     },
@@ -737,7 +899,7 @@
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L76",
-      "community": 9,
+      "community": 13,
       "norm_label": "restore config.json on the gist to default_config. returns defaults.",
       "id": "stock_agent_config_manager_rationale_76"
     },
@@ -746,7 +908,7 @@
       "file_type": "rationale",
       "source_file": "config_manager.py",
       "source_location": "L84",
-      "community": 10,
+      "community": 14,
       "norm_label": "write config dict to the gist as config.json.",
       "id": "stock_agent_config_manager_rationale_84"
     },
@@ -755,7 +917,7 @@
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L23",
-      "community": 11,
+      "community": 15,
       "norm_label": "send a whatsapp message via callmebot.     truncates to 1500 chars. retries up t",
       "id": "stock_agent_whatsapp_rationale_23"
     },
@@ -764,7 +926,7 @@
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L63",
-      "community": 12,
+      "community": 16,
       "norm_label": "build the formatted daily whatsapp message from claude picks.",
       "id": "stock_agent_whatsapp_rationale_63"
     },
@@ -773,7 +935,7 @@
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L118",
-      "community": 13,
+      "community": 17,
       "norm_label": "parse and execute a whatsapp command string.     sends a confirmation message ba",
       "id": "stock_agent_whatsapp_rationale_118"
     },
@@ -782,7 +944,7 @@
       "file_type": "rationale",
       "source_file": "whatsapp.py",
       "source_location": "L129",
-      "community": 14,
+      "community": 18,
       "norm_label": "parse command and return reply string.",
       "id": "stock_agent_whatsapp_rationale_129"
     },
@@ -791,7 +953,7 @@
       "file_type": "rationale",
       "source_file": "ai_analyzer.py",
       "source_location": "L145",
-      "community": 15,
+      "community": 19,
       "norm_label": "call claude api and parse json response. raises on failure.",
       "id": "stock_agent_ai_analyzer_rationale_145"
     },
@@ -800,7 +962,7 @@
       "file_type": "rationale",
       "source_file": "ai_analyzer.py",
       "source_location": "L165",
-      "community": 16,
+      "community": 20,
       "norm_label": "main entry point.     accepts screener output, enriches with news, calls claude,",
       "id": "stock_agent_ai_analyzer_rationale_165"
     },
@@ -809,7 +971,7 @@
       "file_type": "rationale",
       "source_file": "agent.py",
       "source_location": "L75",
-      "community": 17,
+      "community": 21,
       "norm_label": "send an error alert via whatsapp (unless dry_run).",
       "id": "stock_agent_agent_rationale_75"
     }
@@ -1033,6 +1195,18 @@
     },
     {
       "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "telegram_notifier.py",
+      "source_location": "L220",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_parse_and_execute",
+      "_tgt": "stock_agent_config_manager_get_config",
+      "source": "stock_agent_config_manager_get_config",
+      "target": "stock_agent_telegram_notifier_parse_and_execute"
+    },
+    {
+      "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "config_manager.py",
       "source_location": "L69",
@@ -1066,6 +1240,18 @@
       "_tgt": "stock_agent_whatsapp_parse_and_execute",
       "source": "stock_agent_config_manager_update_config",
       "target": "stock_agent_whatsapp_parse_and_execute"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "telegram_notifier.py",
+      "source_location": "L204",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_parse_and_execute",
+      "_tgt": "stock_agent_config_manager_update_config",
+      "source": "stock_agent_config_manager_update_config",
+      "target": "stock_agent_telegram_notifier_parse_and_execute"
     },
     {
       "relation": "calls",
@@ -1105,6 +1291,18 @@
     },
     {
       "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "telegram_notifier.py",
+      "source_location": "L254",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_parse_and_execute",
+      "_tgt": "stock_agent_config_manager_update_config_multi",
+      "source": "stock_agent_config_manager_update_config_multi",
+      "target": "stock_agent_telegram_notifier_parse_and_execute"
+    },
+    {
+      "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "config_manager.py",
       "source_location": "L83",
@@ -1138,6 +1336,18 @@
       "_tgt": "stock_agent_whatsapp_parse_and_execute",
       "source": "stock_agent_config_manager_reset_config",
       "target": "stock_agent_whatsapp_parse_and_execute"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "telegram_notifier.py",
+      "source_location": "L212",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_parse_and_execute",
+      "_tgt": "stock_agent_config_manager_reset_config",
+      "source": "stock_agent_config_manager_reset_config",
+      "target": "stock_agent_telegram_notifier_parse_and_execute"
     },
     {
       "relation": "rationale_for",
@@ -1359,19 +1569,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "webhook.py",
-      "source_location": "L15",
-      "weight": 1.0,
-      "_src": "webhook_py",
-      "_tgt": "stock_agent_webhook_verify_secret",
-      "source": "webhook_py",
-      "target": "stock_agent_webhook_verify_secret",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "webhook.py",
-      "source_location": "L31",
+      "source_location": "L24",
       "weight": 1.0,
       "_src": "webhook_py",
       "_tgt": "stock_agent_webhook_webhook",
@@ -1383,7 +1581,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "webhook.py",
-      "source_location": "L53",
+      "source_location": "L47",
       "weight": 1.0,
       "_src": "webhook_py",
       "_tgt": "stock_agent_webhook_health",
@@ -1395,7 +1593,19 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "webhook.py",
-      "source_location": "L63",
+      "source_location": "L59",
+      "weight": 1.0,
+      "_src": "webhook_py",
+      "_tgt": "stock_agent_webhook_register",
+      "source": "webhook_py",
+      "target": "stock_agent_webhook_register",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "webhook.py",
+      "source_location": "L73",
       "weight": 1.0,
       "_src": "webhook_py",
       "_tgt": "stock_agent_webhook_index",
@@ -1416,52 +1626,64 @@
       "confidence_score": 1.0
     },
     {
-      "relation": "calls",
-      "confidence": "EXTRACTED",
-      "source_file": "webhook.py",
-      "source_location": "L33",
-      "weight": 1.0,
-      "_src": "stock_agent_webhook_webhook",
-      "_tgt": "stock_agent_webhook_verify_secret",
-      "source": "stock_agent_webhook_verify_secret",
-      "target": "stock_agent_webhook_webhook",
-      "confidence_score": 1.0
-    },
-    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "webhook.py",
-      "source_location": "L16",
+      "source_location": "L25",
       "weight": 1.0,
-      "_src": "stock_agent_webhook_rationale_16",
-      "_tgt": "stock_agent_webhook_verify_secret",
-      "source": "stock_agent_webhook_verify_secret",
-      "target": "stock_agent_webhook_rationale_16",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "webhook.py",
-      "source_location": "L32",
-      "weight": 1.0,
-      "_src": "stock_agent_webhook_rationale_32",
+      "_src": "stock_agent_webhook_rationale_25",
       "_tgt": "stock_agent_webhook_webhook",
       "source": "stock_agent_webhook_webhook",
-      "target": "stock_agent_webhook_rationale_32",
+      "target": "stock_agent_webhook_rationale_25",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "webhook.py",
+      "source_location": "L40",
+      "weight": 1.0,
+      "_src": "stock_agent_webhook_webhook",
+      "_tgt": "stock_agent_telegram_notifier_handle_incoming_command",
+      "source": "stock_agent_webhook_webhook",
+      "target": "stock_agent_telegram_notifier_handle_incoming_command"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "webhook.py",
+      "source_location": "L48",
+      "weight": 1.0,
+      "_src": "stock_agent_webhook_rationale_48",
+      "_tgt": "stock_agent_webhook_health",
+      "source": "stock_agent_webhook_health",
+      "target": "stock_agent_webhook_rationale_48",
       "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "webhook.py",
-      "source_location": "L54",
+      "source_location": "L60",
       "weight": 1.0,
-      "_src": "stock_agent_webhook_rationale_54",
-      "_tgt": "stock_agent_webhook_health",
-      "source": "stock_agent_webhook_health",
-      "target": "stock_agent_webhook_rationale_54",
+      "_src": "stock_agent_webhook_rationale_60",
+      "_tgt": "stock_agent_webhook_register",
+      "source": "stock_agent_webhook_register",
+      "target": "stock_agent_webhook_rationale_60",
       "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "webhook.py",
+      "source_location": "L68",
+      "weight": 1.0,
+      "_src": "stock_agent_webhook_register",
+      "_tgt": "stock_agent_telegram_notifier_set_webhook",
+      "source": "stock_agent_webhook_register",
+      "target": "stock_agent_telegram_notifier_set_webhook"
     },
     {
       "relation": "contains",
@@ -2106,8 +2328,8 @@
       "source_file": "agent.py",
       "source_location": "L58",
       "weight": 1.0,
-      "_src": "stock_agent_agent_main",
-      "_tgt": "stock_agent_crypto_screener_run_crypto_screener",
+      "_src": "stock_agent_crypto_screener_run_crypto_screener",
+      "_tgt": "stock_agent_agent_main",
       "source": "stock_agent_crypto_screener_run_crypto_screener",
       "target": "stock_agent_agent_main"
     },
@@ -2160,6 +2382,30 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "agent.py",
+      "source_location": "L85",
+      "weight": 1.0,
+      "_src": "stock_agent_agent_main",
+      "_tgt": "stock_agent_telegram_notifier_format_daily_message",
+      "source": "stock_agent_agent_main",
+      "target": "stock_agent_telegram_notifier_format_daily_message"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "agent.py",
+      "source_location": "L97",
+      "weight": 1.0,
+      "_src": "stock_agent_agent_main",
+      "_tgt": "stock_agent_telegram_notifier_send_message",
+      "source": "stock_agent_agent_main",
+      "target": "stock_agent_telegram_notifier_send_message"
+    },
+    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "agent.py",
@@ -2169,6 +2415,258 @@
       "_tgt": "stock_agent_agent_alert",
       "source": "stock_agent_agent_alert",
       "target": "stock_agent_agent_rationale_106",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "agent.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "_src": "stock_agent_agent_alert",
+      "_tgt": "stock_agent_telegram_notifier_send_message",
+      "source": "stock_agent_agent_alert",
+      "target": "stock_agent_telegram_notifier_send_message"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_bot_token",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_bot_token",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L27",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_chat_id",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_chat_id",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L34",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_send_message",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_send_message",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L72",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_set_webhook",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_set_webhook",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L87",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_stars",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_stars",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L92",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_format_daily_message",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_format_daily_message",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L175",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_handle_incoming_command",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_handle_incoming_command",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L183",
+      "weight": 1.0,
+      "_src": "telegram_notifier_py",
+      "_tgt": "stock_agent_telegram_notifier_parse_and_execute",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_parse_and_execute",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_1",
+      "_tgt": "telegram_notifier_py",
+      "source": "telegram_notifier_py",
+      "target": "stock_agent_telegram_notifier_rationale_1",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L39",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_send_message",
+      "_tgt": "stock_agent_telegram_notifier_bot_token",
+      "source": "stock_agent_telegram_notifier_bot_token",
+      "target": "stock_agent_telegram_notifier_send_message",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L74",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_set_webhook",
+      "_tgt": "stock_agent_telegram_notifier_bot_token",
+      "source": "stock_agent_telegram_notifier_bot_token",
+      "target": "stock_agent_telegram_notifier_set_webhook",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L40",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_send_message",
+      "_tgt": "stock_agent_telegram_notifier_chat_id",
+      "source": "stock_agent_telegram_notifier_chat_id",
+      "target": "stock_agent_telegram_notifier_send_message",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L179",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_handle_incoming_command",
+      "_tgt": "stock_agent_telegram_notifier_send_message",
+      "source": "stock_agent_telegram_notifier_send_message",
+      "target": "stock_agent_telegram_notifier_handle_incoming_command",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L35",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_35",
+      "_tgt": "stock_agent_telegram_notifier_send_message",
+      "source": "stock_agent_telegram_notifier_send_message",
+      "target": "stock_agent_telegram_notifier_rationale_35",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L73",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_73",
+      "_tgt": "stock_agent_telegram_notifier_set_webhook",
+      "source": "stock_agent_telegram_notifier_set_webhook",
+      "target": "stock_agent_telegram_notifier_rationale_73",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L115",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_format_daily_message",
+      "_tgt": "stock_agent_telegram_notifier_stars",
+      "source": "stock_agent_telegram_notifier_stars",
+      "target": "stock_agent_telegram_notifier_format_daily_message",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L93",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_93",
+      "_tgt": "stock_agent_telegram_notifier_format_daily_message",
+      "source": "stock_agent_telegram_notifier_format_daily_message",
+      "target": "stock_agent_telegram_notifier_rationale_93",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L178",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_handle_incoming_command",
+      "_tgt": "stock_agent_telegram_notifier_parse_and_execute",
+      "source": "stock_agent_telegram_notifier_handle_incoming_command",
+      "target": "stock_agent_telegram_notifier_parse_and_execute",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L176",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_176",
+      "_tgt": "stock_agent_telegram_notifier_handle_incoming_command",
+      "source": "stock_agent_telegram_notifier_handle_incoming_command",
+      "target": "stock_agent_telegram_notifier_rationale_176",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "telegram_notifier.py",
+      "source_location": "L184",
+      "weight": 1.0,
+      "_src": "stock_agent_telegram_notifier_rationale_184",
+      "_tgt": "stock_agent_telegram_notifier_parse_and_execute",
+      "source": "stock_agent_telegram_notifier_parse_and_execute",
+      "target": "stock_agent_telegram_notifier_rationale_184",
       "confidence_score": 1.0
     }
   ],

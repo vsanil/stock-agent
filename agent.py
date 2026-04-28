@@ -14,7 +14,7 @@ from config_manager import get_config
 from screener import run_screener
 from crypto_screener import run_crypto_screener
 from ai_analyzer import analyze_with_claude
-from whatsapp import format_daily_message, send_message
+from telegram_notifier import format_daily_message, send_message
 
 ET = pytz.timezone("America/New_York")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
