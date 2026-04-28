@@ -1,7 +1,6 @@
 anthropic>=0.25.0
 yfinance>=0.2.40
 pandas>=2.0.0
-pandas-ta>=0.3.14
 requests>=2.31.0
 flask>=3.0.0
 gunicorn>=21.0.0
