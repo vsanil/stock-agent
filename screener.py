@@ -1,5 +1,5 @@
 """
-screener.py — S&P 500 stock screener using yfinance + pandas-ta.
+screener.py — S&P 500 stock screener using yfinance + ta.
 Returns top 5 short-term and top 5 long-term candidates.
 """
 
@@ -7,6 +7,7 @@ import time
 import warnings
 import pandas as pd
 import yfinance as yf
+import ta
 
 warnings.filterwarnings("ignore")
 
@@ -59,35 +60,30 @@ def _short_term_score(hist: pd.DataFrame) -> tuple[int, dict]:
     metrics = {}
 
     try:
-        import pandas_ta as ta
-
-        close = hist["Close"].squeeze()
+        close  = hist["Close"].squeeze()
         volume = hist["Volume"].squeeze()
 
         # RSI (14-day)
-        rsi_series = ta.rsi(close, length=14)
-        rsi = float(rsi_series.iloc[-1]) if rsi_series is not None and not rsi_series.empty else None
-        metrics["rsi"] = round(rsi, 2) if rsi else None
+        rsi_val = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
+        rsi = round(float(rsi_val), 2) if not pd.isna(rsi_val) else None
+        metrics["rsi"] = rsi
         if rsi and 35 <= rsi <= 55:
             score += 25
 
-        # MACD
-        macd_df = ta.macd(close, fast=12, slow=26, signal=9)
-        if macd_df is not None and not macd_df.empty:
-            macd_col = [c for c in macd_df.columns if c.startswith("MACD_")][0]
-            sig_col  = [c for c in macd_df.columns if c.startswith("MACDs_")][0]
-            macd_vals = macd_df[macd_col]
-            sig_vals  = macd_df[sig_col]
-            # Crossed above in last 3 days?
-            crossed = False
-            for i in range(-3, 0):
-                if (macd_vals.iloc[i] > sig_vals.iloc[i] and
-                        macd_vals.iloc[i - 1] <= sig_vals.iloc[i - 1]):
-                    crossed = True
-                    break
-            metrics["macd_crossover"] = crossed
-            if crossed:
-                score += 25
+        # MACD — crossed above signal in last 3 days?
+        macd_ind  = ta.trend.MACD(close, window_fast=12, window_slow=26, window_sign=9)
+        macd_line = macd_ind.macd()
+        macd_sig  = macd_ind.macd_signal()
+        crossed = False
+        for i in range(-3, 0):
+            if (not pd.isna(macd_line.iloc[i]) and not pd.isna(macd_sig.iloc[i]) and
+                    macd_line.iloc[i] > macd_sig.iloc[i] and
+                    macd_line.iloc[i - 1] <= macd_sig.iloc[i - 1]):
+                crossed = True
+                break
+        metrics["macd_crossover"] = crossed
+        if crossed:
+            score += 25
 
         # Volume ratio (today vs 20-day avg)
         vol_ratio = float(volume.iloc[-1] / volume.iloc[-21:-1].mean()) if len(volume) >= 21 else None
@@ -96,23 +92,21 @@ def _short_term_score(hist: pd.DataFrame) -> tuple[int, dict]:
             score += 20
 
         # 20-day EMA
-        ema20 = ta.ema(close, length=20)
+        ema20_val     = ta.trend.EMAIndicator(close, window=20).ema_indicator().iloc[-1]
         current_price = float(close.iloc[-1])
-        week_high = float(close.rolling(252).max().iloc[-1])
-        if ema20 is not None and not ema20.empty:
-            ema_val = float(ema20.iloc[-1])
+        week_high     = float(close.rolling(252).max().iloc[-1])
+        if not pd.isna(ema20_val):
+            ema_val = float(ema20_val)
             metrics["ema20"] = round(ema_val, 2)
             if ema_val <= current_price <= week_high:
                 score += 15
 
-        # Bollinger Band position
-        bb = ta.bbands(close, length=20, std=2)
-        if bb is not None and not bb.empty:
-            lower_col = [c for c in bb.columns if "BBL" in c][0]
-            lower_band = float(bb[lower_col].iloc[-1])
-            metrics["bb_lower"] = round(lower_band, 2)
-            if current_price <= lower_band * 1.05:
-                score += 15
+        # Bollinger Bands — price within 5% of lower band
+        bb        = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+        lower_band = float(bb.bollinger_lband().iloc[-1])
+        metrics["bb_lower"] = round(lower_band, 2)
+        if not pd.isna(lower_band) and current_price <= lower_band * 1.05:
+            score += 15
 
     except Exception as exc:
         print(f"[screener] Short-term indicator error: {exc}")
