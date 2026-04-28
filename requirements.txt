@@ -1,0 +1,10 @@
+anthropic>=0.25.0
+yfinance>=0.2.40
+pandas>=2.0.0
+pandas-ta>=0.3.14b
+requests>=2.31.0
+flask>=3.0.0
+gunicorn>=21.0.0
+pytz>=2024.1
+lxml>=4.9.0
+html5lib>=1.1
