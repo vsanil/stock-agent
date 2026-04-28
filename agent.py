@@ -1,14 +1,15 @@
 """
 agent.py — Main daily runner. Called by GitHub Actions cron job.
 
-Two run modes (auto-detected by ET time, or forced via RUN_MODE env var):
+Three run modes (auto-detected by ET time, or forced via RUN_MODE env var):
   morning      → 8:00 AM ET  — full screener + Claude analysis + save picks
   confirmation → 10:30 AM ET — fetch live prices, compare to morning picks
+  weekly       → Saturday 8 AM — runs crypto morning picks THEN weekly recap
 
 Env vars:
   DRY_RUN=true    → print message, don't send
   MOCK_DATA=true  → skip live screeners (fast test)
-  RUN_MODE=morning|confirmation → override auto-detection
+  RUN_MODE=morning|confirmation|weekly → override auto-detection
 """
 
 import os
@@ -17,12 +18,15 @@ from datetime import datetime
 
 import pytz
 
-from config_manager import get_config, save_picks, load_picks
+from config_manager import get_config, save_picks, load_picks, save_weekly_pick
 from screener import run_screener
 from crypto_screener import run_crypto_screener
 from ai_analyzer import analyze_with_claude
 from price_checker import get_current_prices
-from telegram_notifier import format_daily_message, format_confirmation_message, send_message
+from telegram_notifier import (
+    format_daily_message, format_confirmation_message,
+    format_weekly_recap_message, send_message,
+)
 
 ET        = pytz.timezone("America/New_York")
 DRY_RUN   = os.environ.get("DRY_RUN",   "false").lower() == "true"
@@ -73,10 +77,12 @@ MOCK_CRYPTO_CANDIDATES = {
 # ── Mode detection ────────────────────────────────────────────────────────────
 
 def detect_run_mode(now_et: datetime) -> str:
-    """Auto-detect run mode by ET hour. Override with RUN_MODE env var."""
+    """Auto-detect run mode by ET hour/weekday. Override with RUN_MODE env var."""
     forced = os.environ.get("RUN_MODE", "").lower()
-    if forced in ("morning", "confirmation"):
+    if forced in ("morning", "confirmation", "weekly"):
         return forced
+    if now_et.weekday() == 5 and now_et.hour < 10:   # Saturday morning
+        return "weekly"
     return "morning" if now_et.hour < 10 else "confirmation"
 
 
@@ -131,8 +137,13 @@ def run_morning(config: dict, now_et: datetime):
         _alert("⚠ Agent error today. Claude analysis unavailable.")
         return
 
-    # Save picks to Gist for 10:30 AM confirmation run
+    # Save picks to Gist for 10:30 AM confirmation run + weekly recap
     save_picks(picks)
+    if not now_et.weekday() >= 5:   # Don't count weekend crypto-only as a "week day"
+        try:
+            save_weekly_pick(picks)
+        except Exception as exc:
+            print(f"[agent] Weekly picks save failed (non-critical): {exc}")
 
     message = format_daily_message(picks, config)
     _send_or_print(message, label="8:00 AM Morning Briefing")
@@ -161,6 +172,27 @@ def run_confirmation():
     _send_or_print(message, label="10:30 AM Confirmation")
 
 
+# ── Weekly recap (Saturday morning) ──────────────────────────────────────────
+
+def run_weekly_recap(config: dict, now_et: datetime):
+    """Saturday: run crypto morning picks, then send a compact weekly recap."""
+    # Step 1: Saturday crypto morning picks (markets closed, crypto runs 24/7)
+    run_morning(config, now_et)
+
+    # Step 2: Weekly performance recap
+    print("[agent] Building weekly recap...")
+    try:
+        from performance_tracker import build_weekly_recap
+        recap = build_weekly_recap()
+        if recap:
+            message = format_weekly_recap_message(recap)
+            _send_or_print(message, label="Weekly Recap")
+        else:
+            print("[agent] No weekly picks data — skipping recap.")
+    except Exception as exc:
+        print(f"[agent] Weekly recap failed (non-critical): {exc}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -177,6 +209,8 @@ def main():
 
     if mode == "morning":
         run_morning(config, now_et)
+    elif mode == "weekly":
+        run_weekly_recap(config, now_et)
     else:
         run_confirmation()
 

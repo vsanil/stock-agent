@@ -25,8 +25,9 @@ DEFAULT_CONFIG = {
     "max_crypto_long_picks": 2,
 }
 
-GIST_FILENAME  = "config.json"
-PICKS_FILENAME = "picks.json"     # Stores morning picks for 10:30 AM confirmation
+GIST_FILENAME         = "config.json"
+PICKS_FILENAME        = "picks.json"          # Stores morning picks for 10:30 AM confirmation
+WEEKLY_PICKS_FILENAME = "weekly_picks.json"   # Accumulates Mon–Fri picks for Saturday recap
 
 
 def _gist_headers() -> dict:
@@ -130,21 +131,64 @@ def load_picks() -> dict | None:
         return None
 
 
+# ── Weekly picks storage (for Saturday recap) ────────────────────────────────
+
+def save_weekly_pick(picks: dict) -> None:
+    """Append today's picks to weekly_picks.json in Gist. Clears stale weeks automatically."""
+    from datetime import date, timedelta
+    today = date.today().isoformat()
+
+    # Load existing weekly data
+    weekly = _load_gist_file(WEEKLY_PICKS_FILENAME) or {}
+
+    # If the oldest entry is > 6 days old, it's a new week — start fresh
+    if weekly:
+        oldest = min(weekly.keys())
+        try:
+            if (date.today() - date.fromisoformat(oldest)).days > 6:
+                weekly = {}
+        except ValueError:
+            weekly = {}
+
+    weekly[today] = picks
+    _write_gist_file(WEEKLY_PICKS_FILENAME, weekly)
+    print(f"[config_manager] Weekly picks updated ({len(weekly)} days this week).")
+
+
+def load_weekly_picks() -> dict:
+    """Load this week's picks keyed by date string. Returns {} if empty or missing."""
+    return _load_gist_file(WEEKLY_PICKS_FILENAME) or {}
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _write_config(config: dict) -> None:
     """Write config dict to the Gist as config.json."""
-    url = f"https://api.github.com/gists/{_gist_id()}"
-    payload = {
-        "files": {
-            GIST_FILENAME: {
-                "content": json.dumps(config, indent=2)
-            }
-        }
-    }
-    resp = requests.patch(url, headers=_gist_headers(), json=payload, timeout=10)
-    resp.raise_for_status()
+    _write_gist_file(GIST_FILENAME, config)
     print(f"[config_manager] Config updated: {config}")
+
+
+def _load_gist_file(filename: str) -> dict | None:
+    """Fetch and parse a JSON file from the Gist. Returns None on any error."""
+    try:
+        url  = f"https://api.github.com/gists/{_gist_id()}"
+        resp = requests.get(url, headers=_gist_headers(), timeout=10)
+        resp.raise_for_status()
+        files = resp.json().get("files", {})
+        if filename not in files:
+            return None
+        return json.loads(files[filename]["content"])
+    except Exception as exc:
+        print(f"[config_manager] WARNING: Could not load {filename} ({exc}).")
+        return None
+
+
+def _write_gist_file(filename: str, data: dict) -> None:
+    """Write any dict as a JSON file to the Gist."""
+    url     = f"https://api.github.com/gists/{_gist_id()}"
+    payload = {"files": {filename: {"content": json.dumps(data, indent=2)}}}
+    resp    = requests.patch(url, headers=_gist_headers(), json=payload, timeout=10)
+    resp.raise_for_status()
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────

@@ -227,6 +227,57 @@ def format_confirmation_message(picks: dict, current_prices: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Weekly recap (Saturday morning) ──────────────────────────────────────────
+
+def format_weekly_recap_message(recap: dict) -> str:
+    """
+    Compact Saturday recap. recap comes from performance_tracker.build_weekly_recap().
+    Keeps it to ~12 lines — wins, avg return vs S&P, best/worst pick.
+    """
+    from datetime import date
+    week_end = date.today().strftime("%b %d")
+
+    def _section(label: str, stats: dict | None, spy: float | None = None) -> list[str]:
+        if not stats:
+            return [f"{label}: no data this week"]
+        win_pct = int(stats["wins"] / stats["count"] * 100)
+        avg     = stats["avg_return"]
+        sign    = "+" if avg >= 0 else ""
+        emoji   = "🟢" if avg > 0 else ("🔴" if avg < -1 else "🟡")
+
+        best_sym,  best_r  = stats["best"]
+        worst_sym, worst_r = stats["worst"]
+        best_sign  = "+" if best_r  >= 0 else ""
+        worst_sign = "+" if worst_r >= 0 else ""
+
+        bench = ""
+        if spy is not None:
+            vs      = round(avg - spy, 1)
+            vs_sign = "+" if vs >= 0 else ""
+            spy_sign = "+" if spy >= 0 else ""
+            bench = f" vs S&P {spy_sign}{spy}% ({vs_sign}{vs}%)"
+
+        return [
+            f"<b>{label}</b> — {stats['count']} picks, {win_pct}% wins",
+            f"Best: <b>{best_sym}</b> {best_sign}{best_r}%  Worst: <b>{worst_sym}</b> {worst_sign}{worst_r}%",
+            f"Avg: {sign}{avg}%{bench} {emoji}",
+        ]
+
+    lines = [
+        f"<b>📅 Week of {week_end} — Recap</b>",
+        "",
+    ]
+    lines += _section("📈 Stocks", recap.get("stocks"), recap.get("spy_return"))
+    lines += [""]
+    lines += _section("🪙 Crypto", recap.get("crypto"))
+    lines += [
+        "",
+        "<i>Entry vs Friday close — not actual trade results.</i>",
+        "<i>⚠️ Not financial advice.</i>",
+    ]
+    return "\n".join(lines)
+
+
 # ── Command handler ───────────────────────────────────────────────────────────
 
 def handle_incoming_command(message_text: str, chat_id: str | None = None) -> str:
