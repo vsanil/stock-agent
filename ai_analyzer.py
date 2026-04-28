@@ -6,35 +6,21 @@ Accepts screener candidates, enriches stocks with Finnhub news, returns structur
 import os
 import json
 import time
-import requests
 import anthropic
+import yfinance as yf
 
-FINNHUB_BASE = "https://finnhub.io/api/v1"
-MAX_TOKENS = 2000   # Increased to accommodate crypto section
+MAX_TOKENS = 2500   # Room for 9 picks + theses
 
 
-# ── Finnhub news (stocks only) ────────────────────────────────────────────────
+# ── News via yfinance (no API key needed) ─────────────────────────────────────
 
 def _get_news_headlines(ticker: str, max_headlines: int = 3) -> list[str]:
-    """Fetch top recent news headlines for a stock ticker from Finnhub free tier."""
-    api_key = os.environ.get("FINNHUB_API_KEY", "")
-    if not api_key:
-        return []
+    """Fetch recent news headlines for a ticker via yfinance (free, no key)."""
     try:
-        from datetime import date, timedelta
-        today = date.today().isoformat()
-        week_ago = (date.today() - timedelta(days=7)).isoformat()
-        url = (
-            f"{FINNHUB_BASE}/company-news"
-            f"?symbol={ticker}&from={week_ago}&to={today}&token={api_key}"
-        )
-        resp = requests.get(url, timeout=8)
-        resp.raise_for_status()
-        articles = resp.json()
-        headlines = [a["headline"] for a in articles[:max_headlines] if "headline" in a]
-        return headlines
+        news = yf.Ticker(ticker).news or []
+        return [n.get("title", "") for n in news[:max_headlines] if n.get("title")]
     except Exception as exc:
-        print(f"[ai_analyzer] Finnhub news error for {ticker}: {exc}")
+        print(f"[ai_analyzer] News fetch error for {ticker}: {exc}")
         return []
 
 
@@ -53,22 +39,26 @@ def _build_stock_candidates(screener_results: dict) -> list[dict]:
     for category, stock in all_picks:
         ticker = stock["ticker"]
         entry = {
-            "asset_type": "stock",
-            "category": category,
-            "ticker": ticker,
-            "company_name": stock.get("company", ticker),
-            "sector": stock.get("sector", "Unknown"),
+            "asset_type":    "stock",
+            "category":      category,
+            "ticker":        ticker,
+            "company_name":  stock.get("company", ticker),
+            "sector":        stock.get("sector", "Unknown"),
             "current_price": stock.get("current_price"),
-            "score": stock.get("score"),
-            "rsi": stock.get("rsi"),
-            "macd_crossover": stock.get("macd_crossover"),
-            "volume_ratio": stock.get("volume_ratio"),
-            "pe_ratio": stock.get("pe_ratio"),
-            "revenue_growth": stock.get("revenue_growth"),
-            "debt_to_equity": stock.get("debt_to_equity"),
-            "market_cap": stock.get("market_cap"),
-            "news_headlines": [],
+            "score":         stock.get("score"),
+            "rsi":           stock.get("rsi"),
+            "macd_crossover":stock.get("macd_crossover"),
+            "volume_ratio":  stock.get("volume_ratio"),
+            "pe_ratio":      stock.get("pe_ratio"),
+            "revenue_growth":stock.get("revenue_growth"),
+            "debt_to_equity":stock.get("debt_to_equity"),
+            "market_cap":    stock.get("market_cap"),
+            "news_headlines":[],
         }
+
+        # Earnings within 5 days — pass through to Claude
+        if stock.get("earnings_date"):
+            entry["earnings_date"] = stock["earnings_date"]
 
         if ticker not in seen:
             entry["news_headlines"] = _get_news_headlines(ticker)
@@ -140,6 +130,19 @@ STOCKS:
   Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)
   Keep best {config.get('max_short_picks', 2)} short-term stocks and best {config.get('max_long_picks', 3)} long-term stocks.
 
+SECTOR DIVERSITY RULE:
+  - Short-term picks must come from different sectors when possible. Never pick 2 stocks
+    from the same sector unless there is no alternative with a meaningful score.
+  - Long-term picks should span at least 2 sectors. Prefer a slightly lower-scoring pick
+    from a different sector over a marginally better pick in an already-represented sector.
+
+EARNINGS RISK RULES (IMPORTANT):
+  - If a candidate has "earnings_date" within 1-2 days: DO NOT include it in short-term picks.
+    Earnings surprises cause violent moves that invalidate technical setups.
+  - If "earnings_date" is 3-5 days away: you MAY include it in short-term picks, but set
+    conviction to maximum 2 stars and include the earnings date in the thesis.
+  - Earnings risk does NOT affect long-term picks — include normally.
+
 CRYPTO:
   Short-term crypto budget: ${config.get('crypto_short_budget', 20)} (target gains within 1-2 weeks, high risk)
   Long-term crypto budget:  ${config.get('crypto_long_budget', 30)} (hold 6-24 months)
@@ -166,7 +169,8 @@ Return this exact JSON structure:
         "allocation": 12.50,
         "conviction": 4,
         "thesis": "one sentence why, max 15 words",
-        "risk": "one sentence risk, max 10 words"
+        "risk": "one sentence risk, max 10 words",
+        "earnings_date": "Thu May 1 or omit if no earnings this week"
       }}
     ],
     "long_term": [
@@ -179,7 +183,8 @@ Return this exact JSON structure:
         "allocation": 16.67,
         "conviction": 5,
         "thesis": "one sentence why, max 15 words",
-        "horizon": "2-3 years"
+        "horizon": "2-3 years",
+        "earnings_date": "Thu May 1 or omit if no earnings this week"
       }}
     ]
   }},

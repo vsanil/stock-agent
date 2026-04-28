@@ -89,6 +89,36 @@ def _stars(conviction: int) -> str:
     return "★" * c + "☆" * (5 - c)
 
 
+def _p(price) -> str:
+    """Format a price cleanly: strip .00 only, commas for thousands."""
+    if price is None:
+        return "—"
+    f = float(price)
+    if f >= 1000:
+        # 65000 → 65,000  |  65432.5 → 65,432.50
+        return f"{f:,.0f}" if f == int(f) else f"{f:,.2f}"
+    # 478.14 → 478.14  |  495.00 → 495  |  244.30 → 244.30
+    s = f"{f:.2f}"
+    return s[:-3] if s.endswith(".00") else s
+
+
+def _upside(entry, target) -> str:
+    """Return (+X.X%) or (-X.X%) string."""
+    try:
+        pct = (float(target) - float(entry)) / float(entry) * 100
+        sign = "+" if pct >= 0 else ""
+        return f"{sign}{pct:.1f}%"
+    except Exception:
+        return ""
+
+
+def _short_company(name: str, max_len: int = 22) -> str:
+    """Trim long company names so lines stay compact."""
+    if not name:
+        return ""
+    return name if len(name) <= max_len else name[:max_len - 1].rstrip() + "…"
+
+
 def format_daily_message(picks: dict, config: dict) -> str:
     """Build the formatted daily Telegram message from Claude picks (stocks + crypto)."""
     today            = date.today().strftime("%a %b %d, %Y")
@@ -97,76 +127,64 @@ def format_daily_message(picks: dict, config: dict) -> str:
     crypto_st_budget = config.get("crypto_short_budget", 20)
     crypto_lt_budget = config.get("crypto_long_budget", 30)
 
-    stocks = picks.get("stocks", picks)
-    crypto = picks.get("crypto", {})
+    stocks    = picks.get("stocks", picks)
+    crypto    = picks.get("crypto", {})
+    st_picks  = stocks.get("short_term", [])
+    lt_picks  = stocks.get("long_term", [])
+    cst_picks = crypto.get("short_term", [])
+    clt_picks = crypto.get("long_term", [])
 
     lines = [
         f"<b>📊 Daily Picks — {today}</b>",
         f"<i>{picks.get('daily_summary', '')}</i>",
-        "",
-        f"<b>📈 STOCKS — Short Term</b> (${short_budget}/trade)",
-        "──────────────────",
     ]
 
-    for i, s in enumerate(stocks.get("short_term", []), 1):
-        lines += [
-            f"{i}. <b>{s.get('ticker')}</b> — {s.get('company')}",
-            f"   Entry: <code>${s.get('entry_price')}</code> | Target: <code>${s.get('target_price')}</code> | Stop: <code>${s.get('stop_loss')}</code>",
-            f"   Alloc: ${s.get('allocation')} | {_stars(s.get('conviction', 3))}",
-            f"   💡 {s.get('thesis')}",
-            f"   ⚠️ {s.get('risk')}",
-        ]
-
-    lines += [
-        "",
-        f"<b>🏦 STOCKS — Long Term</b> (${long_budget}/mo DCA)",
-        "──────────────────",
-    ]
-    for i, s in enumerate(stocks.get("long_term", []), 1):
-        lines += [
-            f"{i}. <b>{s.get('ticker')}</b> — {s.get('company')}",
-            f"   Entry: <code>${s.get('entry_price')}</code> | Target: <code>${s.get('target_price')}</code>",
-            f"   Alloc: ${s.get('allocation')} | Horizon: {s.get('horizon')} | {_stars(s.get('conviction', 3))}",
-            f"   💡 {s.get('thesis')}",
-        ]
-
-    if crypto:
-        lines += [
-            "",
-            f"<b>🪙 CRYPTO — Short Term</b> (${crypto_st_budget}/trade, HIGH RISK)",
-            "──────────────────",
-        ]
-        for i, c in enumerate(crypto.get("short_term", []), 1):
+    # ── Short-term stocks ─────────────────────────────────────────────────────
+    if st_picks:
+        lines += ["", f"<b>📈 Short Term</b>  <i>${short_budget}/trade</i>"]
+        for i, s in enumerate(st_picks, 1):
+            entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
+            earnings_tag = f"  🗓️ Earnings {s['earnings_date']}" if s.get("earnings_date") else ""
             lines += [
-                f"{i}. <b>{c.get('symbol')}</b> — {c.get('name')}",
-                f"   Entry: <code>${c.get('entry_price')}</code> | Target: <code>${c.get('target_price')}</code> | Stop: <code>${c.get('stop_loss')}</code>",
-                f"   Alloc: ${c.get('allocation')} | {_stars(c.get('conviction', 3))}",
-                f"   💡 {c.get('thesis')}",
-                f"   ⚠️ {c.get('risk')}",
+                f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}{earnings_tag}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>",
+                f"   {s.get('thesis')}",
             ]
 
-        lines += [
-            "",
-            f"<b>💎 CRYPTO — Long Term</b> (${crypto_lt_budget}/mo DCA)",
-            "──────────────────",
-        ]
-        for i, c in enumerate(crypto.get("long_term", []), 1):
+    # ── Long-term stocks ──────────────────────────────────────────────────────
+    if lt_picks:
+        lines += ["", f"<b>🏦 Long Term</b>  <i>${long_budget}/mo DCA</i>"]
+        for i, s in enumerate(lt_picks, 1):
+            entry, target = s.get("entry_price"), s.get("target_price")
             lines += [
-                f"{i}. <b>{c.get('symbol')}</b> — {c.get('name')}",
-                f"   Entry: <code>${c.get('entry_price')}</code> | Target: <code>${c.get('target_price')}</code>",
-                f"   Alloc: ${c.get('allocation')} | Horizon: {c.get('horizon')} | {_stars(c.get('conviction', 3))}",
-                f"   💡 {c.get('thesis')}",
+                f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {s.get('horizon')}",
+                f"   {s.get('thesis')}",
             ]
 
-    lines += [
-        "",
-        f"<code>ST=${short_budget} LT=${long_budget} CST=${crypto_st_budget} CLT=${crypto_lt_budget}</code>",
-        "Commands: /set_st /set_lt /set_cst /set_clt /pause /resume /status /reset /help",
-        "",
-        "⏱ Stocks ~15min delayed | Crypto realtime",
-        "⚠️ <i>Not financial advice. Crypto is highly volatile.</i>",
-    ]
+    # ── Crypto short-term ─────────────────────────────────────────────────────
+    if cst_picks:
+        lines += ["", f"<b>🪙 Crypto Short Term</b>  <i>${crypto_st_budget}/trade · HIGH RISK</i>"]
+        for i, c in enumerate(cst_picks, 1):
+            entry, target, stop = c.get("entry_price"), c.get("target_price"), c.get("stop_loss")
+            lines += [
+                f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>",
+                f"   {c.get('thesis')}",
+            ]
 
+    # ── Crypto long-term ──────────────────────────────────────────────────────
+    if clt_picks:
+        lines += ["", f"<b>💎 Crypto Long Term</b>  <i>${crypto_lt_budget}/mo DCA</i>"]
+        for i, c in enumerate(clt_picks, 1):
+            entry, target = c.get("entry_price"), c.get("target_price")
+            lines += [
+                f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {c.get('horizon')}",
+                f"   {c.get('thesis')}",
+            ]
+
+    lines += ["", "<i>⚠️ Not financial advice.  /help for commands.</i>"]
     return "\n".join(lines)
 
 
@@ -176,54 +194,57 @@ def format_confirmation_message(picks: dict, current_prices: dict) -> str:
     """
     Build the 10:30 AM check-in message.
     Compares entry prices from morning picks to current live prices.
-    current_prices: { "AAPL": 185.20, "BTC": 66200, ... }
     """
-    now = date.today().strftime("%a %b %d")
+    now    = date.today().strftime("%a %b %d")
     stocks = picks.get("stocks", picks)
     crypto = picks.get("crypto", {})
 
-    def price_line(symbol: str, entry: float, target: float, stop: float | None) -> str:
+    def price_line(symbol: str, entry, target, stop) -> str:
         current = current_prices.get(symbol)
         if current is None or entry is None:
-            return f"   {symbol}: <code>${entry}</code> → price unavailable"
-        pct = ((current - entry) / entry) * 100
+            return f"   <b>{symbol}</b>  price unavailable"
+        pct   = (current - float(entry)) / float(entry) * 100
         arrow = "▲" if pct >= 0 else "▼"
-        if stop and current <= stop:
-            status = "🔴 STOP HIT"
-        elif pct >= ((target - entry) / entry * 100) * 0.5:
-            status = "✅ On track"
+        sign  = ""   # arrow already implies direction
+        if stop and current <= float(stop):
+            badge = "🔴 STOP HIT"
+        elif target and pct >= (float(target) - float(entry)) / float(entry) * 100 * 0.5:
+            badge = "✅ On track"
         elif pct < -2:
-            status = "⚠️ Watch"
+            badge = "⚠️ Watch"
         else:
-            status = "🟡 Neutral"
-        return f"   {symbol}: <code>${entry}</code> → <code>${round(current,2)}</code> {arrow}{abs(pct):.1f}% {status}"
+            badge = "🟡 Neutral"
+        return (f"   <b>{symbol}</b>  <code>${_p(entry)}</code> → <code>${_p(current)}</code> "
+                f"{arrow}{sign}{abs(pct):.1f}%  {badge}")
 
-    lines = [
-        f"<b>🕙 10:30 AM Check — {now}</b>",
-        "",
-        "<b>📈 STOCK SHORT TERM</b>",
-    ]
-    for s in stocks.get("short_term", []):
-        lines.append(price_line(s.get("ticker",""), s.get("entry_price"), s.get("target_price"), s.get("stop_loss")))
+    st = stocks.get("short_term", [])
+    lt = stocks.get("long_term", [])
+    cst = crypto.get("short_term", [])
+    clt = crypto.get("long_term", [])
 
-    lines += ["", "<b>🏦 STOCK LONG TERM</b>"]
-    for s in stocks.get("long_term", []):
-        lines.append(price_line(s.get("ticker",""), s.get("entry_price"), s.get("target_price"), None))
+    lines = [f"<b>🕙 10:30 AM Check — {now}</b>"]
 
-    if crypto:
-        lines += ["", "<b>🪙 CRYPTO SHORT TERM</b>"]
-        for c in crypto.get("short_term", []):
-            lines.append(price_line(c.get("symbol",""), c.get("entry_price"), c.get("target_price"), c.get("stop_loss")))
+    if st:
+        lines += ["", "<b>📈 Short Term</b>"]
+        for s in st:
+            lines.append(price_line(s.get("ticker", ""), s.get("entry_price"), s.get("target_price"), s.get("stop_loss")))
 
-        lines += ["", "<b>💎 CRYPTO LONG TERM</b>"]
-        for c in crypto.get("long_term", []):
-            lines.append(price_line(c.get("symbol",""), c.get("entry_price"), c.get("target_price"), None))
+    if lt:
+        lines += ["", "<b>🏦 Long Term</b>"]
+        for s in lt:
+            lines.append(price_line(s.get("ticker", ""), s.get("entry_price"), s.get("target_price"), None))
 
-    lines += [
-        "",
-        "🔴 Stop hit — exit  ✅ On track — hold  ⚠️ Watch closely",
-        "<i>⚠️ Not financial advice.</i>",
-    ]
+    if cst:
+        lines += ["", "<b>🪙 Crypto Short Term</b>"]
+        for c in cst:
+            lines.append(price_line(c.get("symbol", ""), c.get("entry_price"), c.get("target_price"), c.get("stop_loss")))
+
+    if clt:
+        lines += ["", "<b>💎 Crypto Long Term</b>"]
+        for c in clt:
+            lines.append(price_line(c.get("symbol", ""), c.get("entry_price"), c.get("target_price"), None))
+
+    lines += ["", "🔴 exit  ✅ hold  ⚠️ watch  🟡 wait", "<i>⚠️ Not financial advice.</i>"]
     return "\n".join(lines)
 
 
