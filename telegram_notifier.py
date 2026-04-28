@@ -113,10 +113,15 @@ def _upside(entry, target) -> str:
 
 
 def _short_company(name: str, max_len: int = 22) -> str:
-    """Trim long company names so lines stay compact."""
+    """Trim long company names at a word boundary so lines stay compact."""
     if not name:
         return ""
-    return name if len(name) <= max_len else name[:max_len - 1].rstrip() + "…"
+    # Strip common suffixes first to save characters
+    for suffix in (", Inc.", " Inc.", " Corp.", " Corporation", " & Co.", " Co.", " Ltd.", " plc"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name if len(name) <= max_len else name[:max_len].rsplit(" ", 1)[0] + "…"
 
 
 def format_daily_message(picks: dict, config: dict) -> str:
@@ -184,7 +189,19 @@ def format_daily_message(picks: dict, config: dict) -> str:
                 f"   {c.get('thesis')}",
             ]
 
-    lines += ["", "<i>⚠️ Not financial advice.  /help for commands.</i>"]
+    # ── Footer ────────────────────────────────────────────────────────────────
+    has_crypto_picks = bool(cst_picks or clt_picks)
+    if has_crypto_picks:
+        budget_line = (f"<code>ST ${short_budget} · LT ${long_budget}/mo · "
+                       f"CST ${crypto_st_budget} · CLT ${crypto_lt_budget}/mo</code>")
+    else:
+        budget_line = f"<code>ST ${short_budget}/trade · LT ${long_budget}/mo DCA</code>"
+
+    lines += [
+        "",
+        budget_line,
+        "<i>⚠️ Not financial advice. /status · /help</i>",
+    ]
     return "\n".join(lines)
 
 

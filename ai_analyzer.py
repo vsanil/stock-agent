@@ -130,11 +130,14 @@ STOCKS:
   Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)
   Keep best {config.get('max_short_picks', 2)} short-term stocks and best {config.get('max_long_picks', 3)} long-term stocks.
 
-SECTOR DIVERSITY RULE:
-  - Short-term picks must come from different sectors when possible. Never pick 2 stocks
-    from the same sector unless there is no alternative with a meaningful score.
-  - Long-term picks should span at least 2 sectors. Prefer a slightly lower-scoring pick
-    from a different sector over a marginally better pick in an already-represented sector.
+SECTOR DIVERSITY RULE (STRICTLY ENFORCE):
+  - Short-term: the 2 picks MUST be from different sectors. No exceptions.
+    If the top 2 are from the same sector, drop the lower-scored one and take the next
+    highest-scored stock from a different sector.
+  - Long-term: no 2 of the 3 picks may share the same sector. If the top 3 by score
+    include duplicates, replace the lower-scored duplicate with the best-scored stock
+    from an unrepresented sector. A pick at 60% score from a new sector beats a pick
+    at 65% score from an already-represented sector.
 
 EARNINGS RISK RULES (IMPORTANT):
   - If a candidate has "earnings_date" within 1-2 days: DO NOT include it in short-term picks.
