@@ -85,19 +85,19 @@ def _build_crypto_candidates(crypto_results: dict) -> list[dict]:
         entry = {
             "asset_type": "crypto",
             "category": category,
+            "id": coin.get("id", ""),                         # CoinGecko slug for price lookups
             "ticker": coin.get("symbol", coin.get("id", "")).upper(),
             "name": coin.get("name"),
             "current_price": coin.get("current_price"),
             "market_cap_usd": coin.get("market_cap"),
             "score": coin.get("score"),
             "rsi": coin.get("rsi"),
-            "volume_ratio": coin.get("volume_ratio"),
+            "volume_24h_usd": coin.get("volume_24h_usd"),    # raw 24h volume in USD
             "price_change_24h_pct": coin.get("price_change_24h_pct"),
             "price_change_7d_pct": coin.get("price_change_7d_pct"),
             "price_change_30d_pct": coin.get("price_change_30d_pct"),
             "pct_below_ath": coin.get("pct_below_ath"),
-            "ma7": coin.get("ma7"),
-            "ma30": coin.get("ma30"),
+            "ma_7d": coin.get("ma7d"),                        # 7-day MA from sparkline
         }
         candidates.append(entry)
 
@@ -194,6 +194,7 @@ Return this exact JSON structure:
   "crypto": {{
     "short_term": [
       {{
+        "id": "bitcoin",
         "symbol": "BTC",
         "name": "Bitcoin",
         "action": "BUY",
@@ -208,6 +209,7 @@ Return this exact JSON structure:
     ],
     "long_term": [
       {{
+        "id": "ethereum",
         "symbol": "ETH",
         "name": "Ethereum",
         "action": "BUY",
@@ -230,7 +232,7 @@ def _call_claude(system: str, user: str) -> dict:
     """Call Claude API and parse JSON response. Raises on failure."""
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user}],

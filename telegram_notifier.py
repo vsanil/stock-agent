@@ -150,9 +150,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         for i, s in enumerate(st_picks, 1):
             entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
             earnings_tag = f"  🗓️ Earnings {s['earnings_date']}" if s.get("earnings_date") else ""
+            alloc = s.get("allocation")
+            alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
             lines += [
                 f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}{earnings_tag}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
                 f"   {s.get('thesis')}",
             ]
 
@@ -161,9 +163,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += ["", f"<b>🏦 Long Term</b>  <i>${long_budget}/mo DCA</i>"]
         for i, s in enumerate(lt_picks, 1):
             entry, target = s.get("entry_price"), s.get("target_price")
+            alloc = s.get("allocation")
+            alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
             lines += [
                 f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {s.get('horizon')}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {s.get('horizon')}{alloc_str}",
                 f"   {s.get('thesis')}",
             ]
 
@@ -172,9 +176,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += ["", f"<b>🪙 Crypto Short Term</b>  <i>${crypto_st_budget}/trade · HIGH RISK</i>"]
         for i, c in enumerate(cst_picks, 1):
             entry, target, stop = c.get("entry_price"), c.get("target_price"), c.get("stop_loss")
+            alloc = c.get("allocation")
+            alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
             lines += [
                 f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
                 f"   {c.get('thesis')}",
             ]
 
@@ -183,9 +189,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += ["", f"<b>💎 Crypto Long Term</b>  <i>${crypto_lt_budget}/mo DCA</i>"]
         for i, c in enumerate(clt_picks, 1):
             entry, target = c.get("entry_price"), c.get("target_price")
+            alloc = c.get("allocation")
+            alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
             lines += [
                 f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {c.get('horizon')}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {c.get('horizon')}{alloc_str}",
                 f"   {c.get('thesis')}",
             ]
 
