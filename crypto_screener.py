@@ -8,8 +8,8 @@ import statistics
 import requests
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-SLEEP_BETWEEN_CALLS = 1.5   # CoinGecko free tier: ~10-30 req/min
-MAX_COINS = 100              # Top 100 by market cap
+SLEEP_BETWEEN_CALLS = 1.2   # CoinGecko free tier: ~10-30 req/min
+MAX_COINS = 50               # Top 50 by market cap — keeps run under ~5 min
 TOP_N = 5                    # Candidates to return per category
 
 # Stablecoins and wrapped tokens to exclude from picks

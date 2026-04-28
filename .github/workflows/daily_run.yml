@@ -4,12 +4,21 @@ on:
   schedule:
     - cron: '0 13 * * 1-5'   # 9:00 AM ET = 13:00 UTC (Mon-Fri) — stocks + crypto
     - cron: '0 13 * * 0,6'   # 9:00 AM ET on weekends — crypto only
-  workflow_dispatch:           # Allow manual trigger from GitHub UI
+  workflow_dispatch:           # Manual trigger with optional flags
+    inputs:
+      dry_run:
+        description: 'Skip sending message (true/false)'
+        required: false
+        default: 'false'
+      mock_data:
+        description: 'Use mock data, skip live screeners — fast test (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   run-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -40,3 +49,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_GIST_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          MOCK_DATA: ${{ github.event.inputs.mock_data || 'false' }}

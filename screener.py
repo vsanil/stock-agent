@@ -26,7 +26,7 @@ SECTOR_MEDIAN_PE = {
     "Unknown": 20,
 }
 
-MAX_TICKERS = 100
+MAX_TICKERS = 50          # Keeps run under ~4 min on GitHub Actions
 SLEEP_BETWEEN_CALLS = 0.1
 
 
