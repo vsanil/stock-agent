@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'webhook.py'
-      - 'whatsapp.py'
+      - 'telegram_notifier.py'
       - 'config_manager.py'
       - 'requirements.txt'
       - 'render.yaml'
