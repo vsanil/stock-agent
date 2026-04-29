@@ -14,11 +14,12 @@ Env vars:
 
 import os
 import sys
+import time
 from datetime import datetime
 
 import pytz
 
-from config_manager import get_config, save_picks, load_picks, save_weekly_pick
+from config_manager import get_config, save_picks, load_picks, save_weekly_pick, get_dynamic_pick_counts
 from trade_logger import open_trades, check_and_close_trades
 from screener import run_screener
 from crypto_screener import run_crypto_screener
@@ -32,6 +33,8 @@ from telegram_notifier import (
 ET        = pytz.timezone("America/New_York")
 DRY_RUN   = os.environ.get("DRY_RUN",   "false").lower() == "true"
 MOCK_DATA = os.environ.get("MOCK_DATA", "false").lower() == "true"
+
+CRYPTO_RETRY_DELAYS = [15, 30, 60, 120]   # seconds between retries (4 attempts after first)
 
 
 # ── Mock data for fast testing ────────────────────────────────────────────────
@@ -91,6 +94,37 @@ def detect_run_mode(now_et: datetime) -> str:
     return "confirmation"
 
 
+# ── Crypto screener with retry ────────────────────────────────────────────────
+
+def _run_crypto_with_retry() -> dict:
+    """
+    Run crypto screener with up to 5 attempts and increasing delays.
+    Sends a Telegram alert on first failure, recovery alert if it succeeds late,
+    and a final failure alert if all attempts are exhausted.
+    """
+    empty = {"short_term": [], "long_term": []}
+
+    for attempt, delay in enumerate([0] + CRYPTO_RETRY_DELAYS, start=1):
+        if delay:
+            print(f"[agent] Crypto retry {attempt}/5 — waiting {delay}s...")
+            time.sleep(delay)
+        try:
+            result = run_crypto_screener()
+            if result.get("short_term") or result.get("long_term"):
+                if attempt > 1:
+                    _alert(f"✅ Crypto screener recovered on attempt {attempt}/5.")
+                return result
+            raise ValueError("Screener returned empty results")
+        except Exception as exc:
+            print(f"[agent] Crypto screener attempt {attempt}/5 failed: {exc}")
+            if attempt == 3:
+                _alert(f"⚠️ Crypto screener still failing after 3 attempts — retrying ({exc}).")
+            elif attempt == len(CRYPTO_RETRY_DELAYS) + 1:
+                _alert("❌ Crypto screener failed after 5 attempts. Skipping crypto today.")
+
+    return empty
+
+
 # ── Morning run ───────────────────────────────────────────────────────────────
 
 def run_morning(config: dict, now_et: datetime):
@@ -117,12 +151,8 @@ def run_morning(config: dict, now_et: datetime):
 
         crypto_candidates = {"short_term": [], "long_term": []}
         if config.get("crypto_enabled", True):
-            print("[agent] Running crypto screener...")
-            try:
-                crypto_candidates = run_crypto_screener()
-            except Exception as exc:
-                print(f"[agent] Crypto screener failed: {exc}")
-                _alert(f"⚠ Crypto screener error: {exc}")
+            print("[agent] Running crypto screener (with retry)...")
+            crypto_candidates = _run_crypto_with_retry()
 
     has_stocks = bool(stock_candidates["short_term"] or stock_candidates["long_term"])
     has_crypto = bool(crypto_candidates["short_term"] or crypto_candidates["long_term"])
@@ -130,6 +160,11 @@ def run_morning(config: dict, now_et: datetime):
     if not has_stocks and not has_crypto:
         _alert("⚠ Both screeners returned no candidates today. No picks sent.")
         return
+
+    # Apply dynamic pick counts based on current budget
+    dynamic_counts = get_dynamic_pick_counts(config)
+    config = {**config, **dynamic_counts}
+    print(f"[agent] Dynamic pick counts: {dynamic_counts}")
 
     print("[agent] Running Claude analysis...")
     try:

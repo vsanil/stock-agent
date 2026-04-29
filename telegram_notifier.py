@@ -200,15 +200,23 @@ def format_daily_message(picks: dict, config: dict) -> str:
     # ── Footer ────────────────────────────────────────────────────────────────
     has_crypto_picks = bool(cst_picks or clt_picks)
     if has_crypto_picks:
-        budget_line = (f"<code>ST ${short_budget} · LT ${long_budget}/mo · "
-                       f"CST ${crypto_st_budget} · CLT ${crypto_lt_budget}/mo</code>")
+        budget_line = (f"💰 <b>Budgets:</b> ST <code>${short_budget}/trade</code> · "
+                       f"LT <code>${long_budget}/mo DCA</code> · "
+                       f"CST <code>${crypto_st_budget}/trade</code> · "
+                       f"CLT <code>${crypto_lt_budget}/mo DCA</code>")
+        adjust_line = (f"<i>To adjust: /set_st {short_budget} · /set_lt {long_budget} · "
+                       f"/set_cst {crypto_st_budget} · /set_clt {crypto_lt_budget}</i>")
     else:
-        budget_line = f"<code>ST ${short_budget}/trade · LT ${long_budget}/mo DCA</code>"
+        budget_line = (f"💰 <b>Budgets:</b> ST <code>${short_budget}/trade</code> · "
+                       f"LT <code>${long_budget}/mo DCA</code>")
+        adjust_line = (f"<i>To adjust: /set_st {short_budget} · /set_lt {long_budget} "
+                       f"— replace with your amount (e.g. /set_st 50)</i>")
 
     lines += [
         "",
         budget_line,
-        "<i>⚠️ Not financial advice. /status · /help</i>",
+        adjust_line,
+        "<i>⚠️ Not financial advice. /prices · /perf · /help</i>",
     ]
     return "\n".join(lines)
 

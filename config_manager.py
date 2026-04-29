@@ -161,6 +161,37 @@ def load_weekly_picks() -> dict:
     return _load_gist_file(WEEKLY_PICKS_FILENAME) or {}
 
 
+# ── Dynamic pick counts ───────────────────────────────────────────────────────
+
+def get_dynamic_pick_counts(config: dict) -> dict:
+    """
+    Compute pick counts based on budget so larger budgets get more diversification.
+    Maintains a minimum allocation per pick to keep positions meaningful.
+
+    Thresholds:
+      Stock ST  — min $12/pick, max 5 picks
+      Stock LT  — min $15/pick, max 6 picks
+      Crypto ST — min $10/pick, max 4 picks
+      Crypto LT — min $10/pick, max 4 picks
+
+    Examples:
+      ST $25  → 2 picks ($12.50 each)
+      ST $50  → 4 picks ($12.50 each)
+      ST $100 → 5 picks (capped)
+      LT $50  → 3 picks ($16.67 each)
+      LT $100 → 6 picks (capped)
+    """
+    def _count(budget: float, min_per_pick: float, max_picks: int) -> int:
+        return max(2, min(max_picks, int(budget / min_per_pick)))
+
+    return {
+        "max_short_picks":        _count(config.get("short_term_budget",  25), 12.0, 5),
+        "max_long_picks":         _count(config.get("long_term_budget",   50), 15.0, 6),
+        "max_crypto_short_picks": _count(config.get("crypto_short_budget", 20), 10.0, 4),
+        "max_crypto_long_picks":  _count(config.get("crypto_long_budget",  30), 10.0, 4),
+    }
+
+
 # ── Trade log (persistent P&L tracking) ──────────────────────────────────────
 
 def load_trade_log() -> dict:
