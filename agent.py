@@ -19,6 +19,7 @@ from datetime import datetime
 import pytz
 
 from config_manager import get_config, save_picks, load_picks, save_weekly_pick
+from trade_logger import open_trades, check_and_close_trades
 from screener import run_screener
 from crypto_screener import run_crypto_screener
 from ai_analyzer import analyze_with_claude
@@ -79,11 +80,15 @@ MOCK_CRYPTO_CANDIDATES = {
 def detect_run_mode(now_et: datetime) -> str:
     """Auto-detect run mode by ET hour/weekday. Override with RUN_MODE env var."""
     forced = os.environ.get("RUN_MODE", "").lower()
-    if forced in ("morning", "confirmation", "weekly"):
+    if forced in ("morning", "confirmation", "weekly", "close_check"):
         return forced
     if now_et.weekday() == 5 and now_et.hour < 10:   # Saturday morning
         return "weekly"
-    return "morning" if now_et.hour < 10 else "confirmation"
+    if now_et.hour < 10:
+        return "morning"
+    if now_et.hour >= 15:
+        return "close_check"   # 3:30 PM ET — silent unless a trade closed
+    return "confirmation"
 
 
 # ── Morning run ───────────────────────────────────────────────────────────────
@@ -145,6 +150,12 @@ def run_morning(config: dict, now_et: datetime):
         except Exception as exc:
             print(f"[agent] Weekly picks save failed (non-critical): {exc}")
 
+    # Open new trades in the trade log
+    try:
+        open_trades(picks)
+    except Exception as exc:
+        print(f"[agent] Trade log open failed (non-critical): {exc}")
+
     message = format_daily_message(picks, config)
     _send_or_print(message, label="8:00 AM Morning Briefing")
 
@@ -168,8 +179,53 @@ def run_confirmation():
         _alert("⚠ Could not fetch prices for 10:30 AM check.")
         return
 
+    # Check and close trades that hit target or stop
+    try:
+        closed = check_and_close_trades(current_prices)
+        for trade in closed:
+            emoji = "✅" if trade["outcome"] == "target" else ("🔴" if trade["outcome"] == "stop" else "⏱")
+            sign  = "+" if trade["return_pct"] >= 0 else ""
+            _alert(f"{emoji} <b>{trade['ticker']}</b> {trade['outcome'].upper()} HIT "
+                   f"@ <code>${trade['closed_price']}</code>  "
+                   f"<b>{sign}{trade['return_pct']:.1f}%</b>  "
+                   f"(${trade['gain_usd']:+.2f})")
+    except Exception as exc:
+        print(f"[agent] Trade close check failed (non-critical): {exc}")
+
     message = format_confirmation_message(picks, current_prices)
     _send_or_print(message, label="10:30 AM Confirmation")
+
+
+# ── Close check (3:30 PM — silent unless a trade closed) ─────────────────────
+
+def run_close_check():
+    """3:30 PM run. Checks trades silently — only sends a message if target/stop hit."""
+    print("[agent] Running 3:30 PM close check...")
+    picks = load_picks()
+    if not picks:
+        print("[agent] No picks for today — nothing to check.")
+        return
+
+    try:
+        current_prices = get_current_prices(picks)
+    except Exception as exc:
+        print(f"[agent] Price fetch failed: {exc}")
+        return
+
+    try:
+        closed = check_and_close_trades(current_prices)
+        if closed:
+            for trade in closed:
+                emoji = "✅" if trade["outcome"] == "target" else ("🔴" if trade["outcome"] == "stop" else "⏱")
+                sign  = "+" if trade["return_pct"] >= 0 else ""
+                _alert(f"{emoji} <b>{trade['ticker']}</b> {trade['outcome'].upper()} HIT "
+                       f"@ <code>${trade['closed_price']}</code>  "
+                       f"<b>{sign}{trade['return_pct']:.1f}%</b>  "
+                       f"(${trade['gain_usd']:+.2f})")
+        else:
+            print("[agent] 3:30 PM close check: no trades hit. No message sent.")
+    except Exception as exc:
+        print(f"[agent] Trade close check failed (non-critical): {exc}")
 
 
 # ── Weekly recap (Saturday morning) ──────────────────────────────────────────
@@ -211,6 +267,8 @@ def main():
         run_morning(config, now_et)
     elif mode == "weekly":
         run_weekly_recap(config, now_et)
+    elif mode == "close_check":
+        run_close_check()
     else:
         run_confirmation()
 

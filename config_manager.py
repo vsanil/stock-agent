@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
 GIST_FILENAME         = "config.json"
 PICKS_FILENAME        = "picks.json"          # Stores morning picks for 10:30 AM confirmation
 WEEKLY_PICKS_FILENAME = "weekly_picks.json"   # Accumulates Mon–Fri picks for Saturday recap
+TRADE_LOG_FILENAME    = "trade_log.json"      # Persistent trade log for performance tracking
 
 
 def _gist_headers() -> dict:
@@ -158,6 +159,25 @@ def save_weekly_pick(picks: dict) -> None:
 def load_weekly_picks() -> dict:
     """Load this week's picks keyed by date string. Returns {} if empty or missing."""
     return _load_gist_file(WEEKLY_PICKS_FILENAME) or {}
+
+
+# ── Trade log (persistent P&L tracking) ──────────────────────────────────────
+
+def load_trade_log() -> dict:
+    """Load trade log from Gist. Returns {"open": [], "closed": []} if missing."""
+    data = _load_gist_file(TRADE_LOG_FILENAME)
+    if not data:
+        return {"open": [], "closed": []}
+    data.setdefault("open", [])
+    data.setdefault("closed", [])
+    return data
+
+
+def save_trade_log(log: dict) -> None:
+    """Save trade log to Gist."""
+    _write_gist_file(TRADE_LOG_FILENAME, log)
+    print(f"[config_manager] Trade log saved "
+          f"({len(log['open'])} open, {len(log['closed'])} closed).")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

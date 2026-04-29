@@ -8,7 +8,7 @@ import time
 import requests
 from datetime import date
 
-from config_manager import get_config, update_config, update_config_multi, reset_config
+from config_manager import get_config, update_config, update_config_multi, reset_config, load_picks
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_MESSAGE_LENGTH = 4096   # Telegram limit (much larger than WhatsApp)
@@ -340,9 +340,58 @@ def _parse_and_execute(text: str) -> str:
     # Telegram slash-commands (/help) or plain text (HELP) — normalise both
     text = text.lstrip("/").replace("_", " ")   # /set_st 30 → SET ST 30
 
+    if text == "PERF":
+        from trade_logger import get_performance_stats
+        stock_stats  = get_performance_stats("stock")
+        crypto_stats = get_performance_stats("crypto")
+
+        if not stock_stats and not crypto_stats:
+            return "📭 No closed trades yet. Check back after your first picks are resolved."
+
+        def _stat_block(label: str, s: dict) -> str:
+            if not s:
+                return f"{label}: no closed trades yet"
+            sign     = "+" if s["avg_return"] >= 0 else ""
+            gain_sign = "+" if s["total_gain_usd"] >= 0 else ""
+            best_sym, best_r   = s["best"]
+            worst_sym, worst_r = s["worst"]
+            return (
+                f"<b>{label}</b> — {s['count']} trades  {s['win_rate']}% wins\n"
+                f"Avg: {sign}{s['avg_return']}%  "
+                f"Best: <b>{best_sym}</b> {'+' if best_r >= 0 else ''}{best_r}%  "
+                f"Worst: <b>{worst_sym}</b> {'+' if worst_r >= 0 else ''}{worst_r}%\n"
+                f"✅ {s['targets_hit']} targets  🔴 {s['stops_hit']} stops  ⏱ {s['expired']} expired\n"
+                f"P&L: <code>{gain_sign}${abs(s['total_gain_usd']):.2f}</code> "
+                f"on <code>${s['total_deployed_usd']:.0f}</code> deployed"
+            )
+
+        open_line = ""
+        if stock_stats and stock_stats["open_count"]:
+            open_line = f"\n\n<i>{stock_stats['open_count']} trade(s) still open</i>"
+
+        lines = ["<b>📊 All-Time Performance</b>", ""]
+        lines.append(_stat_block("📈 Stocks", stock_stats))
+        lines += ["", _stat_block("🪙 Crypto", crypto_stats)]
+        if open_line:
+            lines.append(open_line)
+        return "\n".join(lines)
+
+    if text == "PRICES":
+        picks = load_picks()
+        if not picks:
+            return "📭 No picks found for today yet. Check back after 8 AM ET."
+        try:
+            from price_checker import get_current_prices
+            current_prices = get_current_prices(picks)
+            return format_confirmation_message(picks, current_prices)
+        except Exception as exc:
+            return f"⚠️ Could not fetch prices: {exc}"
+
     if text in ("HELP", "START"):
         return (
             "📋 <b>Available commands:</b>\n"
+            "/prices        — live prices for today's picks\n"
+            "/perf          — all-time performance stats\n"
             "/set_st &lt;n&gt;   — stock short-term budget\n"
             "/set_lt &lt;n&gt;   — stock long-term budget\n"
             "/set_cst &lt;n&gt;  — crypto short-term budget\n"
