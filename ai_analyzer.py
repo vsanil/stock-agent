@@ -38,6 +38,32 @@ def _build_stock_candidates(screener_results: dict) -> list[dict]:
 
     for category, stock in all_picks:
         ticker = stock["ticker"]
+
+        # ── Code-level earnings pre-filter (safety net) ──────────────────────
+        # Strip SHORT-TERM candidates with earnings within 2 days before Claude
+        # sees them. This prevents Claude from including them even if it ignores
+        # the prompt rule.
+        if category == "short_term" and stock.get("earnings_date"):
+            try:
+                from datetime import datetime, date
+                ed = stock["earnings_date"]
+                # Support "Thu May 1" style strings and ISO dates
+                for fmt in ("%a %b %d", "%Y-%m-%d", "%b %d"):
+                    try:
+                        parsed = datetime.strptime(ed, fmt)
+                        # For formats without year, assume current year
+                        parsed = parsed.replace(year=date.today().year)
+                        days_away = (parsed.date() - date.today()).days
+                        if 0 <= days_away <= 2:
+                            print(f"[ai_analyzer] Pre-filter: dropping {ticker} "
+                                  f"from short_term (earnings in {days_away}d: {ed})")
+                            continue
+                        break
+                    except ValueError:
+                        continue
+            except Exception as exc:
+                print(f"[ai_analyzer] Earnings date parse error for {ticker}: {exc}")
+
         entry = {
             "asset_type":    "stock",
             "category":      category,
@@ -130,6 +156,12 @@ STOCKS:
   Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)
   Keep best {config.get('max_short_picks', 2)} short-term stocks and best {config.get('max_long_picks', 3)} long-term stocks.
 
+ALLOCATION RULE (STRICTLY ENFORCE):
+  - Divide each budget EQUALLY among all picks in that category. Do NOT weight by conviction.
+  - Example: $25 ST budget ÷ 2 picks = $12.50 each. $50 LT budget ÷ 3 picks = $16.67 each.
+  - Same rule for crypto: $20 CST ÷ 2 = $10.00 each. $30 CLT ÷ 2 = $15.00 each.
+  - Every pick in the same category must have the SAME allocation value.
+
 SECTOR DIVERSITY RULE (STRICTLY ENFORCE):
   - Short-term: the 2 picks MUST be from different sectors. No exceptions.
     If the top 2 are from the same sector, drop the lower-scored one and take the next
@@ -139,8 +171,9 @@ SECTOR DIVERSITY RULE (STRICTLY ENFORCE):
     from an unrepresented sector. A pick at 60% score from a new sector beats a pick
     at 65% score from an already-represented sector.
 
-EARNINGS RISK RULES (IMPORTANT):
+EARNINGS RISK RULES (HARD RULE — ZERO EXCEPTIONS):
   - If a candidate has "earnings_date" within 1-2 days: DO NOT include it in short-term picks.
+    This is an absolute rule. No exceptions for high scores, strong setups, or any other reason.
     Earnings surprises cause violent moves that invalidate technical setups.
   - If "earnings_date" is 3-5 days away: you MAY include it in short-term picks, but set
     conviction to maximum 2 stars and include the earnings date in the thesis.
@@ -156,11 +189,18 @@ LONG-TERM TARGET PRICE RULES (STRICTLY ENFORCE):
   - Example: a 2-3 year tech pick at $424 entry → realistic target $560-650, NOT $800+
   - Do NOT extrapolate recent momentum into long-term targets.
   - If a stock's target implies >25% annualised return, reduce it to 20% max.
+  - CRYPTO LONG-TERM CAP: Maximum total return of 50% over the full horizon regardless
+    of ATH distance or past performance. Do NOT set crypto LT targets implying 100-200%+ gains.
 
 CRYPTO:
   Short-term crypto budget: ${config.get('crypto_short_budget', 20)} (target gains within 1-2 weeks, high risk)
   Long-term crypto budget:  ${config.get('crypto_long_budget', 30)} (hold 6-24 months)
   Keep best {config.get('max_crypto_short_picks', 2)} short-term crypto and best {config.get('max_crypto_long_picks', 2)} long-term crypto.
+
+CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
+  - Each crypto symbol may appear in AT MOST ONE category (short_term OR long_term, NEVER both).
+  - If a coin scores well in both categories, place it only in the category where it scores highest.
+  - Fill the other slot with the next-best coin that does NOT already appear in any category.
 
 Stock Candidates:
 {json.dumps(stock_candidates, indent=2)}
