@@ -50,31 +50,95 @@ SLEEP_INFO     = 0.1   # Delay between individual .info calls
 
 # ── S&P 500 ticker list ───────────────────────────────────────────────────────
 
-# Fallback list (used if Wikipedia is unreachable)
+# Comprehensive S&P 500 fallback — ~400 major constituents, updated periodically.
+# Used when live sources are unreachable (GitHub Actions blocks Wikipedia).
 FALLBACK_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
-    "UNH", "LLY", "JPM", "V", "XOM", "MA", "AVGO", "PG", "HD", "CVX",
-    "MRK", "ABBV", "COST", "PEP", "KO", "WMT", "BAC", "CRM", "ACN",
-    "MCD", "TMO", "CSCO", "ABT", "ADBE", "DIS", "NKE", "TXN", "NEE",
-    "WFC", "PM", "RTX", "UPS", "INTU", "AMGN", "MS", "SPGI", "GS",
-    "LOW", "HON", "ISRG", "CAT", "ELV", "BKNG", "PLD", "AMD", "NOW",
-    "MDLZ", "TGT", "MMC", "ZTS", "CB", "SHW", "CI", "MO", "DUK",
-    "SO", "BMY", "GILD", "EOG", "SLB", "BDX", "ITW", "NOC", "APD",
-    "AON", "CME", "ICE", "ECL", "REGN", "HUM", "F", "GM", "UBER",
+    # Mega-cap / Top 50
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "BRK-B", "AVGO",
+    "LLY", "JPM", "V", "UNH", "XOM", "MA", "PG", "JNJ", "COST", "HD",
+    "MRK", "ABBV", "CVX", "CRM", "BAC", "NFLX", "AMD", "KO", "WMT", "PEP",
+    "TMO", "ACN", "MCD", "CSCO", "ABT", "ADBE", "TXN", "DIS", "WFC", "NEE",
+    "PM", "RTX", "UPS", "INTU", "AMGN", "MS", "SPGI", "GS", "LOW", "HON",
+    # 51–100
+    "ISRG", "CAT", "ELV", "BKNG", "PLD", "NOW", "MDLZ", "TGT", "ZTS", "CB",
+    "SHW", "CI", "MO", "DUK", "SO", "BMY", "GILD", "EOG", "SLB", "BDX",
+    "ITW", "NOC", "APD", "AON", "CME", "ICE", "ECL", "REGN", "HUM", "F",
+    "GM", "UBER", "MMC", "PNC", "USB", "AXP", "BLK", "SCHW", "TJX", "DE",
+    "ETN", "EMR", "ADI", "KLAC", "LRCX", "MCHP", "AMAT", "SNPS", "CDNS", "FTNT",
+    # 101–150
+    "ADP", "PAYX", "VRSK", "CTAS", "ROP", "IDXX", "FAST", "ODFL", "CPRT", "CSGP",
+    "ANSS", "KEYS", "TROW", "STE", "WST", "EPAM", "TDY", "BR", "POOL", "PAYC",
+    "MTCH", "ETSY", "PENN", "DXCM", "ALGN", "TECH", "HOLX", "COO", "ABMD", "PKI",
+    "IQV", "CRL", "MTD", "A", "BIO", "ILMN", "WAT", "SGEN", "BIIB", "VRTX",
+    "MRNA", "REGN", "ALXN", "IONS", "NBIX", "INCY", "JAZZ", "BMRN", "EXAS", "NTRA",
+    # 151–200
+    "CVS", "CI", "HUM", "CNC", "MOH", "WBA", "MCK", "CAH", "ABC", "HCA",
+    "UHS", "THC", "CYH", "DVA", "DaVita", "MD", "ENSG", "AMED", "HUMA", "OMCL",
+    "BAX", "BSX", "EW", "DXCM", "PODD", "PHM", "DHI", "LEN", "NVR", "TOL",
+    "MDC", "MHO", "TPH", "TMHC", "LGIH", "SKY", "CVCO", "MCS", "BZH", "HOV",
+    "LOW", "HD", "FND", "LL", "TILE", "FBHS", "MAS", "SWK", "IR", "ROK",
+    # 201–250
+    "AMT", "CCI", "SBAC", "EQIX", "DLR", "PSA", "EXR", "AVB", "EQR", "ESS",
+    "MAA", "UDR", "CPT", "IRT", "NHI", "VTR", "WELL", "PEAK", "DOC", "HR",
+    "MPW", "OHI", "CTRE", "SBRA", "LTC", "SNH", "CSW", "NYCB", "HBAN", "RF",
+    "CFG", "KEY", "FITB", "MTB", "ZION", "CMA", "SNV", "SIVB", "PACW", "WAL",
+    "OZK", "UMBF", "FFIN", "IBCP", "NBTB", "SFBS", "FULT", "WSFS", "TRMK", "NBT",
+    # 251–300
+    "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "PEG", "ES", "FE",
+    "ETR", "PPL", "CMS", "NI", "WEC", "LNT", "EVRG", "OGE", "POR", "AVA",
+    "NWE", "OTTR", "UTL", "MGEE", "CLECO", "IDA", "ALE", "PNM", "EE", "OTTER",
+    "XOM", "CVX", "COP", "EOG", "PXD", "DVN", "MRO", "HES", "APA", "FANG",
+    "OXY", "VLO", "MPC", "PSX", "HFC", "DK", "PBF", "CVI", "PARR", "CALUMET",
+    # 301–350
+    "LIN", "APD", "ECL", "PPG", "SHW", "RPM", "AXTA", "KPLT", "H", "VMC",
+    "MLM", "CRH", "EXP", "SUM", "USLM", "ROCK", "GMS", "BLDR", "BECN", "IBP",
+    "WMS", "AAON", "TREX", "AZEK", "PGTI", "FBHS", "DOOR", "JELD", "CEVA", "AMWD",
+    "CAT", "DE", "AGCO", "CNH", "TTC", "LNN", "CNHI", "GNSS", "IIPR", "ALGT",
+    "UAL", "DAL", "AAL", "LUV", "SAVE", "JBLU", "HA", "ALK", "MESA", "SKYW",
+    # 351–400
+    "UNP", "CSX", "NSC", "KSU", "CP", "CNI", "WAB", "TRN", "RAIL", "GNSS",
+    "FDX", "UPS", "XPO", "CHRW", "EXPD", "JBHT", "WERN", "ODFL", "SAIA", "ARCB",
+    "HTLD", "MRTN", "USX", "PTSI", "CVLG", "ECHO", "LSTR", "HUBG", "FWRD", "ATSG",
+    "AZO", "ORLY", "AAP", "GPC", "LKQ", "MNRO", "SMP", "DORM", "ALSN", "MODV",
+    "TSCO", "FIVE", "OLLI", "BIG", "PRGO", "SFM", "WINA", "CASY", "MUSA", "ARKO",
 ]
 
 
 def get_sp500_tickers() -> list[str]:
-    """Pull S&P 500 tickers from Wikipedia. Returns up to MAX_TICKERS."""
+    """
+    Fetch S&P 500 tickers. Tries datahub.io CSV first (reliable from CI),
+    then Wikipedia, then falls back to the built-in list.
+    """
+    # Source 1: datahub.io — reliable from GitHub Actions
+    try:
+        resp = requests.get(
+            "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        lines   = resp.text.strip().splitlines()
+        tickers = [line.split(",")[0].strip().replace(".", "-")
+                   for line in lines[1:] if line.strip()]
+        tickers = [t for t in tickers if t and not t.startswith('"')]
+        if len(tickers) > 100:
+            print(f"[screener] Fetched {len(tickers)} tickers from datahub.io.")
+            return tickers[:MAX_TICKERS]
+    except Exception as exc:
+        print(f"[screener] datahub.io failed ({exc}), trying Wikipedia...")
+
+    # Source 2: Wikipedia
     try:
         tables  = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
         df      = tables[0]
         tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
-        print(f"[screener] Fetched {len(tickers)} S&P 500 tickers from Wikipedia.")
-        return tickers[:MAX_TICKERS]
+        if len(tickers) > 100:
+            print(f"[screener] Fetched {len(tickers)} tickers from Wikipedia.")
+            return tickers[:MAX_TICKERS]
     except Exception as exc:
-        print(f"[screener] WARNING: Could not fetch S&P 500 list ({exc}). Using fallback list.")
-        return FALLBACK_TICKERS[:MAX_TICKERS]
+        print(f"[screener] Wikipedia failed ({exc}). Using built-in fallback list.")
+
+    print(f"[screener] Using built-in fallback list ({len(FALLBACK_TICKERS)} tickers).")
+    return FALLBACK_TICKERS[:MAX_TICKERS]
 
 
 # ── Technical indicators (short-term scoring) ─────────────────────────────────

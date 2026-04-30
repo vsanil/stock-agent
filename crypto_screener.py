@@ -1,20 +1,28 @@
 """
 crypto_screener.py — Crypto screener using CoinGecko free API (no key needed).
-Uses sparkline data bundled in the single /coins/markets call — no per-coin requests,
-no rate limiting. Returns top short-term and long-term crypto candidates.
+
+Two-phase approach for reliable RSI + MA scoring:
+  Phase 1: Single bulk call → filter + basic scoring → top CANDIDATE_N coins
+  Phase 2: Individual market_chart calls for those candidates → full RSI/MA scoring
+
+If the bulk call already includes sparkline data, Phase 2 is skipped entirely.
+CoinGecko free tier: ~30 calls/min. Phase 2 adds ~15 calls with 0.5s delays = ~10s.
 """
 
+import time
 import statistics
 import requests
 
-COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-MAX_COINS = 100   # All fetched in ONE API call via sparkline=true
-TOP_N = 5
+COINGECKO_BASE  = "https://api.coingecko.com/api/v3"
+MAX_COINS       = 100    # Fetched in the bulk call
+CANDIDATE_N     = 15     # Fetch individual price history for this many candidates
+TOP_N           = 5      # Final picks returned per category
+HISTORY_DELAY   = 0.5    # Seconds between individual market_chart calls
 
-# Min market cap filter — exclude micro-caps and suspicious tokens
+# Min market cap filter — exclude micro-caps
 MIN_MARKET_CAP = 200_000_000   # $200M
 
-# Stablecoins, wrapped tokens, and liquid staking tokens to exclude
+# Stablecoins, wrapped tokens, liquid staking tokens to exclude
 EXCLUDE_IDS = {
     "tether", "usd-coin", "binance-usd", "dai", "frax", "true-usd",
     "usdd", "gemini-dollar", "paxos-standard", "wrapped-bitcoin",
@@ -25,21 +33,17 @@ EXCLUDE_IDS = {
 }
 
 
-# ── CoinGecko — single bulk call ──────────────────────────────────────────────
+# ── CoinGecko API calls ───────────────────────────────────────────────────────
 
 def _get_top_coins(limit: int = MAX_COINS) -> list[dict]:
-    """
-    Fetch top coins by market cap WITH 7-day sparkline prices included.
-    sparkline=true returns ~168 hourly price points — enough for RSI + MA.
-    This is a SINGLE API call — no per-coin requests needed.
-    """
+    """Bulk fetch top coins by market cap. Requests sparkline but doesn't require it."""
     url = f"{COINGECKO_BASE}/coins/markets"
     params = {
-        "vs_currency": "usd",
-        "order": "market_cap_desc",
-        "per_page": limit,
-        "page": 1,
-        "sparkline": True,                      # 7-day hourly prices bundled in
+        "vs_currency":            "usd",
+        "order":                  "market_cap_desc",
+        "per_page":               limit,
+        "page":                   1,
+        "sparkline":              True,
         "price_change_percentage": "24h,7d,30d",
     }
     resp = requests.get(url, params=params, timeout=20)
@@ -47,10 +51,31 @@ def _get_top_coins(limit: int = MAX_COINS) -> list[dict]:
     return resp.json()
 
 
-# ── Technical indicators (from sparkline hourly data) ────────────────────────
+def _get_price_history(coin_id: str, days: int = 7) -> list[float]:
+    """
+    Fetch hourly price history for a single coin via /coins/{id}/market_chart.
+    Returns a flat list of prices, or [] on failure.
+    This endpoint reliably returns data regardless of sparkline availability.
+    """
+    try:
+        url  = f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
+        resp = requests.get(
+            url,
+            params={"vs_currency": "usd", "days": days, "interval": "hourly"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("prices", [])
+        return [p[1] for p in raw]   # [[timestamp, price], ...] → [price, ...]
+    except Exception as exc:
+        print(f"[crypto_screener] Price history fetch failed for {coin_id}: {exc}")
+        return []
+
+
+# ── Technical indicators ──────────────────────────────────────────────────────
 
 def _simple_rsi(prices: list[float], period: int = 14) -> float | None:
-    if len(prices) < period + 1:
+    if not prices or len(prices) < period + 1:
         return None
     deltas   = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
     gains    = [d for d in deltas[-period:] if d > 0]
@@ -62,7 +87,7 @@ def _simple_rsi(prices: list[float], period: int = 14) -> float | None:
 
 
 def _simple_ma(prices: list[float], period: int) -> float | None:
-    if len(prices) < period:
+    if not prices or len(prices) < max(period, 1):
         return None
     return round(statistics.mean(prices[-period:]), 8)
 
@@ -74,31 +99,31 @@ def _short_term_score(coin: dict, prices: list[float]) -> tuple[int, dict]:
     metrics = {}
     current_price = coin.get("current_price", 0)
 
-    # RSI (last 14 hourly closes → ~14h RSI as proxy for day-level)
-    rsi = _simple_rsi(prices[-30:], period=14)
+    # RSI — needs price history (25 pts)
+    rsi = _simple_rsi(prices[-30:], period=14) if prices else None
     metrics["rsi"] = rsi
     if rsi and 40 <= rsi <= 65:
         score += 25
 
-    # 24h price change > 2%
+    # 24h price change > 2% (20 pts)
     chg_24h = coin.get("price_change_percentage_24h_in_currency", 0) or 0
     metrics["price_change_24h_pct"] = round(chg_24h, 2)
     if chg_24h > 2:
         score += 20
 
-    # Price above 48-hour MA (short-term uptrend; 48 hourly points ≈ 2 days)
-    ma48 = _simple_ma(prices, 48)
+    # Price above 48h MA — needs price history (20 pts)
+    ma48 = _simple_ma(prices, 48) if prices else None
     metrics["ma48"] = ma48
     if ma48 and current_price > ma48:
         score += 20
 
-    # 7d change positive but < 30% (momentum without over-extension)
+    # 7d change positive but < 30% (20 pts)
     chg_7d = coin.get("price_change_percentage_7d_in_currency", 0) or 0
     metrics["price_change_7d_pct"] = round(chg_7d, 2)
     if 0 < chg_7d < 30:
         score += 20
 
-    # 24h volume above $50M (sufficient liquidity)
+    # 24h volume above $50M (15 pts)
     vol_24h = coin.get("total_volume", 0) or 0
     metrics["volume_24h_usd"] = vol_24h
     if vol_24h > 50_000_000:
@@ -114,24 +139,24 @@ def _long_term_score(coin: dict, prices: list[float]) -> tuple[int, dict]:
     market_cap    = coin.get("market_cap", 0)
     ath           = coin.get("ath", 0)
 
-    # Market cap > $10B
+    # Market cap > $10B (30 pts)
     metrics["market_cap_usd"] = market_cap
     if market_cap and market_cap > 10_000_000_000:
         score += 30
 
-    # Price above 7-day MA (using full sparkline)
-    ma_all = _simple_ma(prices, len(prices))
-    metrics["ma7d"] = ma_all
-    if ma_all and current_price > ma_all:
+    # Price above 7-day MA — needs price history (25 pts)
+    ma_7d = _simple_ma(prices, len(prices)) if prices else None
+    metrics["ma7d"] = ma_7d
+    if ma_7d and current_price > ma_7d:
         score += 25
 
-    # 30d price change positive
+    # 30d price change positive (20 pts)
     chg_30d = coin.get("price_change_percentage_30d_in_currency", 0) or 0
     metrics["price_change_30d_pct"] = round(chg_30d, 2)
     if chg_30d > 0:
         score += 20
 
-    # Within 60% of ATH
+    # Within 60% of ATH (15 pts)
     metrics["ath_usd"] = ath
     if ath and current_price > 0:
         pct_from_ath = ((ath - current_price) / ath) * 100
@@ -139,7 +164,7 @@ def _long_term_score(coin: dict, prices: list[float]) -> tuple[int, dict]:
         if pct_from_ath < 60:
             score += 15
 
-    # Room to grow (ATH > 30% above current)
+    # Room to grow — ATH > 30% above current (10 pts)
     if ath and current_price > 0 and ath > current_price * 1.3:
         score += 10
 
@@ -150,10 +175,12 @@ def _long_term_score(coin: dict, prices: list[float]) -> tuple[int, dict]:
 
 def run_crypto_screener() -> dict:
     """
-    Screen top coins using a SINGLE CoinGecko API call (sparkline bundled).
-    No per-coin requests, no rate limiting.
+    Two-phase crypto screening:
+      Phase 1 — Bulk call: filter + basic score → pick top CANDIDATE_N
+      Phase 2 — Individual price history: full RSI/MA scoring for candidates
+                 (skipped if sparkline already present in bulk response)
     """
-    print(f"[crypto_screener] Fetching top {MAX_COINS} coins from CoinGecko (1 API call)...")
+    print(f"[crypto_screener] Fetching top {MAX_COINS} coins from CoinGecko...")
     try:
         coins = _get_top_coins(MAX_COINS)
     except Exception as exc:
@@ -165,17 +192,51 @@ def run_crypto_screener() -> dict:
         c for c in coins
         if c.get("id") not in EXCLUDE_IDS
         and (c.get("market_cap") or 0) >= MIN_MARKET_CAP
-        and c.get("sparkline_in_7d", {}).get("price")   # must have price data
     ]
-    print(f"[crypto_screener] Scoring {len(coins)} coins after exclusions...")
 
+    has_sparkline = sum(1 for c in coins
+                        if (c.get("sparkline_in_7d") or {}).get("price"))
+    print(f"[crypto_screener] {len(coins)} coins after exclusions, "
+          f"{has_sparkline} with sparkline data.")
+
+    # Phase 1: basic score on all coins (no price history needed)
+    basic_scores = []
+    for coin in coins:
+        prices    = (coin.get("sparkline_in_7d") or {}).get("price") or []
+        st_score, _ = _short_term_score(coin, prices)
+        lt_score, _ = _long_term_score(coin, prices)
+        basic_scores.append((coin, st_score, lt_score))
+
+    # Pick top CANDIDATE_N by combined score for price history fetch
+    combined = sorted(basic_scores, key=lambda x: x[1] + x[2], reverse=True)
+    candidates = [c[0] for c in combined[:CANDIDATE_N]]
+
+    # Phase 2: fetch individual price history if sparkline was missing
+    needs_history = has_sparkline < len(candidates)
+    if needs_history:
+        print(f"[crypto_screener] Fetching price history for "
+              f"{len(candidates)} candidates (sparkline unavailable)...")
+        for coin in candidates:
+            existing = (coin.get("sparkline_in_7d") or {}).get("price") or []
+            if not existing:
+                prices = _get_price_history(coin["id"], days=7)
+                coin["_fetched_prices"] = prices
+                time.sleep(HISTORY_DELAY)
+    else:
+        print("[crypto_screener] Sparkline data present — skipping individual fetches.")
+
+    # Final scoring with full price data
     short_results = []
     long_results  = []
 
-    for coin in coins:
-        prices = coin["sparkline_in_7d"]["price"]   # ~168 hourly prices
-        symbol = coin.get("symbol", "").upper()
-        name   = coin.get("name", coin["id"])
+    for coin in candidates:
+        # Prefer fetched prices, then sparkline, then empty
+        prices = (coin.get("_fetched_prices")
+                  or (coin.get("sparkline_in_7d") or {}).get("price")
+                  or [])
+
+        symbol        = coin.get("symbol", "").upper()
+        name          = coin.get("name", coin["id"])
         current_price = coin.get("current_price", 0)
 
         st_score, st_metrics = _short_term_score(coin, prices)

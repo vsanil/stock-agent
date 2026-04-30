@@ -146,6 +146,17 @@ EARNINGS RISK RULES (IMPORTANT):
     conviction to maximum 2 stars and include the earnings date in the thesis.
   - Earnings risk does NOT affect long-term picks — include normally.
 
+LONG-TERM TARGET PRICE RULES (STRICTLY ENFORCE):
+  - Use realistic MID-CASE returns, NOT bull-case or best-case scenarios.
+  - Base targets on historical growth rates and current valuation multiples.
+  - Annualised return benchmarks by type:
+      Tech / growth stocks:    12-18% per year
+      Value / defensive stocks: 8-12% per year
+      Crypto long-term:        20-40% per year (higher volatility)
+  - Example: a 2-3 year tech pick at $424 entry → realistic target $560-650, NOT $800+
+  - Do NOT extrapolate recent momentum into long-term targets.
+  - If a stock's target implies >25% annualised return, reduce it to 20% max.
+
 CRYPTO:
   Short-term crypto budget: ${config.get('crypto_short_budget', 20)} (target gains within 1-2 weeks, high risk)
   Long-term crypto budget:  ${config.get('crypto_long_budget', 30)} (hold 6-24 months)
