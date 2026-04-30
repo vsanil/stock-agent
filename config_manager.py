@@ -23,6 +23,10 @@ DEFAULT_CONFIG = {
     "crypto_long_budget": 30,
     "max_crypto_short_picks": 2,
     "max_crypto_long_picks": 2,
+    # AI intelligence settings
+    "risk_profile": "moderate",       # conservative | moderate | aggressive
+    "excluded_sectors": [],            # e.g. ["Energy", "Utilities"]
+    "watchlist": [],                   # e.g. ["NVDA", "TSLA", "BRK-B"] — always evaluated
 }
 
 GIST_FILENAME         = "config.json"

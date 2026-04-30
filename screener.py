@@ -294,7 +294,10 @@ def _long_term_score(info: dict, fh: dict) -> tuple[int, dict]:
 
 # ── Main screener ─────────────────────────────────────────────────────────────
 
-def run_screener() -> dict:
+def run_screener(
+    watchlist: list[str] | None = None,
+    excluded_sectors: list[str] | None = None,
+) -> dict:
     """
     Screen S&P 500 stocks and return top candidates.
 
@@ -309,9 +312,23 @@ def run_screener() -> dict:
       4. Fetch yfinance .info (name/sector) + Finnhub metrics (financials) for
          the union of ST pool + LT pool (~40-50 unique tickers).
       5. Score those for long-term fundamentals using Finnhub data.
-      6. Return top 5 short-term (by ST score) + top 5 long-term (by LT score).
+      6. Apply sector exclusions, then return top 5 ST + top 5 LT.
+
+    watchlist      — tickers always included in both pools regardless of score
+    excluded_sectors — sectors to strip from final picks (e.g. ["Energy", "Utilities"])
     """
+    watchlist        = [t.upper() for t in (watchlist or [])]
+    excluded_sectors = [s.lower() for s in (excluded_sectors or [])]
+
     tickers = get_sp500_tickers()
+
+    # Add watchlist tickers not already in the S&P 500 list
+    if watchlist:
+        existing = set(tickers)
+        extra = [t for t in watchlist if t not in existing]
+        if extra:
+            tickers = tickers + extra
+            print(f"[screener] Watchlist added {len(extra)} extra tickers: {extra}")
 
     # ── Step 1: Bulk price history download ──────────────────────────────────
     print(f"[screener] Bulk downloading {len(tickers)} tickers (one API call)...")
@@ -370,6 +387,21 @@ def run_screener() -> dict:
 
     # LT pool: highest dollar volume (large caps worth holding long term)
     lt_pool = sorted(all_scored, key=lambda x: x["avg_dollar_vol"], reverse=True)[:LT_CANDIDATE_N]
+
+    # Watchlist bypass — ensure watchlist tickers are in both pools
+    if watchlist:
+        scored_map = {s["ticker"]: s for s in all_scored}
+        in_st = {s["ticker"] for s in st_pool}
+        in_lt = {s["ticker"] for s in lt_pool}
+        for ticker in watchlist:
+            if ticker in scored_map:
+                if ticker not in in_st:
+                    st_pool.append(scored_map[ticker])
+                if ticker not in in_lt:
+                    lt_pool.append(scored_map[ticker])
+        if watchlist:
+            print(f"[screener] Watchlist tickers guaranteed in pools: "
+                  f"{[t for t in watchlist if t in scored_map]}")
 
     # ── Step 4: Earnings calendar ─────────────────────────────────────────────
     all_pool_tickers = list({s["ticker"] for s in st_pool + lt_pool})
@@ -437,6 +469,17 @@ def run_screener() -> dict:
         return {"ticker": e["ticker"], "company": e["company"], "sector": e["sector"],
                 "current_price": e["current_price"], "score": e["lt_score"],
                 **e["lt_metrics"], **_opt_earnings(e)}
+
+    # Apply sector exclusions
+    if excluded_sectors:
+        before = len(enriched)
+        enriched = {
+            k: v for k, v in enriched.items()
+            if v.get("sector", "").lower() not in excluded_sectors
+        }
+        removed = before - len(enriched)
+        if removed:
+            print(f"[screener] Removed {removed} tickers from excluded sectors.")
 
     # ST top-5: from the ST pool only (ranked by technical score)
     short_top5 = [_flatten_short(enriched[s["ticker"]]) for s in st_pool

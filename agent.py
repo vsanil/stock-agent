@@ -15,11 +15,11 @@ Env vars:
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 import pytz
 
-from config_manager import get_config, save_picks, load_picks, save_weekly_pick, get_dynamic_pick_counts
+from config_manager import get_config, save_picks, load_picks, save_weekly_pick, get_dynamic_pick_counts, load_trade_log
 from trade_logger import open_trades, check_and_close_trades
 from screener import run_screener
 from crypto_screener import run_crypto_screener
@@ -35,6 +35,63 @@ DRY_RUN   = os.environ.get("DRY_RUN",   "false").lower() == "true"
 MOCK_DATA = os.environ.get("MOCK_DATA", "false").lower() == "true"
 
 CRYPTO_RETRY_DELAYS = [15, 30, 60, 120]   # seconds between retries (4 attempts after first)
+
+VIX_ALERT_THRESHOLD = 25   # warn when VIX exceeds this level
+
+
+# ── US Market holiday detector ────────────────────────────────────────────────
+
+def is_market_holiday(d: date) -> bool:
+    """Return True if d is a US stock market holiday (NYSE/NASDAQ)."""
+    y = d.year
+
+    def _observed(fixed: date) -> date:
+        """Shift fixed holiday to observed date when it falls on a weekend."""
+        if fixed.weekday() == 5:  # Saturday → Friday
+            return fixed - timedelta(days=1)
+        if fixed.weekday() == 6:  # Sunday → Monday
+            return fixed + timedelta(days=1)
+        return fixed
+
+    def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+        """Return the nth occurrence of weekday (0=Mon…6=Sun) in the given month."""
+        first  = date(year, month, 1)
+        offset = (weekday - first.weekday()) % 7
+        return first + timedelta(days=offset + 7 * (n - 1))
+
+    def _last_weekday(year: int, month: int, weekday: int) -> date:
+        """Return the last occurrence of weekday in the given month."""
+        import calendar
+        last = date(year, month, calendar.monthrange(year, month)[1])
+        return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+    def _easter(year: int) -> date:
+        """Computus algorithm — returns Easter Sunday."""
+        a = year % 19
+        b, c = divmod(year, 100)
+        d2, e = divmod(b, 4)
+        f  = (b + 8) // 25
+        g  = (b - f + 1) // 3
+        h  = (19 * a + b - d2 - g + 15) % 30
+        i, k = divmod(c, 4)
+        l  = (32 + 2 * e + 2 * i - h - k) % 7
+        m  = (a + 11 * h + 22 * l) // 451
+        mo, day = divmod(h + l - 7 * m + 114, 31)
+        return date(year, mo, day + 1)
+
+    holidays = {
+        _observed(date(y, 1, 1)),           # New Year's Day
+        _nth_weekday(y, 1, 0, 3),           # MLK Day (3rd Mon Jan)
+        _nth_weekday(y, 2, 0, 3),           # Presidents' Day (3rd Mon Feb)
+        _easter(y) - timedelta(days=2),     # Good Friday
+        _last_weekday(y, 5, 0),             # Memorial Day (last Mon May)
+        _observed(date(y, 6, 19)),          # Juneteenth
+        _observed(date(y, 7, 4)),           # Independence Day
+        _nth_weekday(y, 9, 0, 1),           # Labor Day (1st Mon Sep)
+        _nth_weekday(y, 11, 3, 4),          # Thanksgiving (4th Thu Nov)
+        _observed(date(y, 12, 25)),         # Christmas
+    }
+    return d in holidays
 
 
 # ── Mock data for fast testing ────────────────────────────────────────────────
@@ -130,10 +187,16 @@ def _run_crypto_with_retry() -> dict:
 def run_morning(config: dict, now_et: datetime):
     """Full screener + Claude analysis + save picks + send morning message."""
     is_weekend = now_et.weekday() >= 5
+    is_holiday = (not is_weekend) and is_market_holiday(now_et.date())
 
     if is_weekend and not config.get("crypto_enabled", True):
         print("[agent] Weekend + crypto disabled. Nothing to run.")
         return
+
+    if is_holiday:
+        print("[agent] US market holiday — stock screener skipped.")
+        _alert("🏖️ <b>Market Closed</b> — US holiday today. No stock picks.\n"
+               "<i>Crypto runs 24/7 — picks below if any signals found.</i>")
 
     if MOCK_DATA:
         print("[agent] Using mock data — skipping live screeners.")
@@ -141,10 +204,42 @@ def run_morning(config: dict, now_et: datetime):
         crypto_candidates = MOCK_CRYPTO_CANDIDATES
     else:
         stock_candidates = {"short_term": [], "long_term": []}
-        if not is_weekend:
+        macro_context    = {}
+
+        if not is_weekend and not is_holiday:
+            # ── Macro context (SPY%, 10Y yield, VIX) ─────────────────────────
+            try:
+                import yfinance as yf
+                spy_hist = yf.Ticker("SPY").history(period="2d")
+                tnx_hist = yf.Ticker("^TNX").history(period="1d")
+                vix_hist = yf.Ticker("^VIX").history(period="1d")
+
+                if len(spy_hist) >= 2:
+                    spy_prev = float(spy_hist["Close"].iloc[-2])
+                    spy_curr = float(spy_hist["Close"].iloc[-1])
+                    macro_context["spy_pct"]   = round((spy_curr - spy_prev) / spy_prev * 100, 2)
+                    macro_context["spy_price"] = round(spy_curr, 2)
+                if not tnx_hist.empty:
+                    macro_context["tnx_yield"] = round(float(tnx_hist["Close"].iloc[-1]), 2)
+                if not vix_hist.empty:
+                    vix = float(vix_hist["Close"].iloc[-1])
+                    macro_context["vix"] = round(vix, 1)
+                    print(f"[agent] VIX = {vix:.1f}")
+                    if vix > VIX_ALERT_THRESHOLD:
+                        _alert(
+                            f"⚠️ <b>High Volatility Alert</b> — VIX = <code>{vix:.1f}</code>\n"
+                            f"Market fear is elevated. Consider tightening stop-losses "
+                            f"and reducing short-term position sizes today."
+                        )
+            except Exception as exc:
+                print(f"[agent] Macro context fetch failed (non-critical): {exc}")
+
             print("[agent] Running stock screener...")
             try:
-                stock_candidates = run_screener()
+                stock_candidates = run_screener(
+                    watchlist=config.get("watchlist", []),
+                    excluded_sectors=config.get("excluded_sectors", []),
+                )
             except Exception as exc:
                 print(f"[agent] Stock screener failed: {exc}")
                 _alert(f"⚠ Stock screener error: {exc}")
@@ -166,16 +261,35 @@ def run_morning(config: dict, now_et: datetime):
     config = {**config, **dynamic_counts}
     print(f"[agent] Dynamic pick counts: {dynamic_counts}")
 
+    # Recent losers — tickers that lost in the last 14 days
+    recent_losers: list[str] = []
+    try:
+        log = load_trade_log()
+        cutoff = (now_et.date() - timedelta(days=14)).isoformat()
+        recent_losers = [
+            t["ticker"] for t in log.get("closed", [])
+            if t.get("return_pct", 0) < 0 and t.get("closed_date", "") >= cutoff
+        ]
+        if recent_losers:
+            print(f"[agent] Recent losers (last 14d): {recent_losers}")
+    except Exception as exc:
+        print(f"[agent] Recent losers fetch failed (non-critical): {exc}")
+
     print("[agent] Running Claude analysis...")
     try:
         picks = analyze_with_claude(
             stock_candidates, config,
             crypto_results=crypto_candidates if has_crypto else None,
+            recent_losers=recent_losers,
         )
     except Exception as exc:
         print(f"[agent] Claude analysis failed: {exc}")
         _alert("⚠ Agent error today. Claude analysis unavailable.")
         return
+
+    # Attach macro context so the formatter can display it
+    if macro_context:
+        picks["macro_context"] = macro_context
 
     # Save picks to Gist for 10:30 AM confirmation run + weekly recap
     save_picks(picks)
@@ -226,6 +340,25 @@ def run_confirmation():
                    f"(${trade['gain_usd']:+.2f})")
     except Exception as exc:
         print(f"[agent] Trade close check failed (non-critical): {exc}")
+
+    # ── Earnings warning for open stock positions ─────────────────────────────
+    try:
+        from earnings_checker import get_upcoming_earnings
+        log = load_trade_log()
+        open_stock_tickers = [
+            t["ticker"] for t in log.get("open", [])
+            if t.get("asset_type") == "stock"
+        ]
+        if open_stock_tickers:
+            upcoming = get_upcoming_earnings(open_stock_tickers, days_ahead=3)
+            for ticker, earnings_date in upcoming.items():
+                _alert(
+                    f"🗓️ <b>Earnings Warning</b> — <b>{ticker}</b> reports <b>{earnings_date}</b>\n"
+                    f"You have an open position. Earnings can cause sharp moves — "
+                    f"consider closing before the announcement."
+                )
+    except Exception as exc:
+        print(f"[agent] Earnings warning check failed (non-critical): {exc}")
 
     message = format_confirmation_message(picks, current_prices)
     _send_or_print(message, label="10:30 AM Confirmation")

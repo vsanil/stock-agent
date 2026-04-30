@@ -178,19 +178,33 @@ def get_performance_stats(asset_type: str | None = None) -> dict | None:
         o = t.get("outcome", "unknown")
         by_outcome[o] = by_outcome.get(o, 0) + 1
 
+    # Streak: consecutive wins from most recent closed trade
+    sorted_by_date = sorted(closed, key=lambda t: t.get("closed_date", ""), reverse=True)
+    streak = 0
+    for t in sorted_by_date:
+        if t["return_pct"] > 0:
+            streak += 1
+        else:
+            break
+
+    # Cumulative return % = total gain / total deployed
+    cum_return_pct = round(total_gain_usd / total_deployed * 100, 1) if total_deployed > 0 else 0.0
+
     return {
-        "count":              len(closed),
-        "wins":               wins,
-        "win_rate":           round(wins / len(closed) * 100),
-        "avg_return":         round(avg_return, 1),
-        "best":               max(returns, key=lambda x: x[1]),
-        "worst":              min(returns, key=lambda x: x[1]),
-        "total_gain_usd":     round(total_gain_usd, 2),
-        "total_deployed_usd": round(total_deployed, 2),
-        "targets_hit":        by_outcome.get("target", 0),
-        "stops_hit":          by_outcome.get("stop", 0),
-        "expired":            by_outcome.get("expired", 0),
-        "open_count":         open_count,
+        "count":                len(closed),
+        "wins":                 wins,
+        "win_rate":             round(wins / len(closed) * 100),
+        "avg_return":           round(avg_return, 1),
+        "best":                 max(returns, key=lambda x: x[1]),
+        "worst":                min(returns, key=lambda x: x[1]),
+        "total_gain_usd":       round(total_gain_usd, 2),
+        "total_deployed_usd":   round(total_deployed, 2),
+        "cumulative_return_pct": cum_return_pct,
+        "streak":               streak,
+        "targets_hit":          by_outcome.get("target", 0),
+        "stops_hit":            by_outcome.get("stop", 0),
+        "expired":              by_outcome.get("expired", 0),
+        "open_count":           open_count,
     }
 
 

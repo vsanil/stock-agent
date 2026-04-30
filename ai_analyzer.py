@@ -9,7 +9,7 @@ import time
 import anthropic
 import yfinance as yf
 
-MAX_TOKENS = 2500   # Room for 9 picks + theses
+MAX_TOKENS = 1500   # ~1000-1200 tokens actual output for 9 picks; 1500 gives safe headroom
 
 
 # ── News via yfinance (no API key needed) ─────────────────────────────────────
@@ -43,26 +43,30 @@ def _build_stock_candidates(screener_results: dict) -> list[dict]:
         # Strip SHORT-TERM candidates with earnings within 2 days before Claude
         # sees them. This prevents Claude from including them even if it ignores
         # the prompt rule.
+        skip = False
         if category == "short_term" and stock.get("earnings_date"):
             try:
-                from datetime import datetime, date
+                from datetime import datetime, date as _date
                 ed = stock["earnings_date"]
                 # Support "Thu May 1" style strings and ISO dates
                 for fmt in ("%a %b %d", "%Y-%m-%d", "%b %d"):
                     try:
                         parsed = datetime.strptime(ed, fmt)
                         # For formats without year, assume current year
-                        parsed = parsed.replace(year=date.today().year)
-                        days_away = (parsed.date() - date.today()).days
+                        parsed = parsed.replace(year=_date.today().year)
+                        days_away = (parsed.date() - _date.today()).days
                         if 0 <= days_away <= 2:
                             print(f"[ai_analyzer] Pre-filter: dropping {ticker} "
                                   f"from short_term (earnings in {days_away}d: {ed})")
-                            continue
+                            skip = True
                         break
                     except ValueError:
                         continue
             except Exception as exc:
                 print(f"[ai_analyzer] Earnings date parse error for {ticker}: {exc}")
+
+        if skip:
+            continue  # skip the outer loop — drop this candidate entirely
 
         entry = {
             "asset_type":    "stock",
@@ -144,10 +148,40 @@ STRICT_RETRY_SYSTEM = (
 )
 
 
+def _build_risk_profile_block(profile: str) -> str:
+    """Return risk profile instructions for the Claude prompt."""
+    if profile == "conservative":
+        return """
+RISK PROFILE: conservative
+  - Only pick candidates with conviction ★★★★ or higher — skip borderline setups.
+  - Favour low-volatility sectors: Consumer Staples, Utilities, Health Care, Financials.
+  - Stop-losses: set 4% below entry (tighter than default).
+  - Maximum 1 short-term stock pick regardless of budget.
+  - Reduce crypto allocations by 50%; skip crypto short-term entirely if alternatives exist.
+  - Long-term picks only from companies with positive revenue growth and D/E < 0.5."""
+    if profile == "aggressive":
+        return """
+RISK PROFILE: aggressive
+  - Include picks with conviction ★★★ and above — strong setup counts even if risky.
+  - All sectors welcome including high-beta: Technology, Energy, Consumer Discretionary.
+  - Stop-losses: set 8% below entry (wider room to breathe).
+  - Maximise pick counts within budget — fill all slots.
+  - Full crypto allocations; include higher-risk coins with strong momentum.
+  - Short-term targets can be 10-15% above entry for high-momentum plays."""
+    # moderate (default)
+    return """
+RISK PROFILE: moderate (default)
+  - Standard conviction threshold ★★★ minimum.
+  - Balanced sector exposure — no preference.
+  - Stop-losses: 5% below entry.
+  - Standard pick counts and crypto allocations."""
+
+
 def _build_user_prompt(
     stock_candidates: list[dict],
     crypto_candidates: list[dict],
     config: dict,
+    recent_losers: list[str] | None = None,
 ) -> str:
     return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
 
@@ -201,6 +235,16 @@ CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
   - Each crypto symbol may appear in AT MOST ONE category (short_term OR long_term, NEVER both).
   - If a coin scores well in both categories, place it only in the category where it scores highest.
   - Fill the other slot with the next-best coin that does NOT already appear in any category.
+
+{_build_risk_profile_block(config.get('risk_profile', 'moderate'))}
+
+{f"""AVOID REPEAT LOSERS (HARD RULE):
+  These tickers lost money in the last 14 days — DO NOT re-pick them today:
+  {', '.join(recent_losers)}
+  If a watchlist ticker appears here, still include it but cap conviction at ★★★.""" if recent_losers else ""}
+
+{f"""EXCLUDED SECTORS (HARD RULE — ZERO EXCEPTIONS):
+  Never pick stocks from these sectors regardless of score: {', '.join(config.get('excluded_sectors', []))}""" if config.get('excluded_sectors') else ""}
 
 Stock Candidates:
 {json.dumps(stock_candidates, indent=2)}
@@ -279,11 +323,11 @@ Return this exact JSON structure:
 
 # ── Claude call ───────────────────────────────────────────────────────────────
 
-def _call_claude(system: str, user: str) -> dict:
+def _call_claude(system: str, user: str, model: str = "claude-sonnet-4-6") -> dict:
     """Call Claude API and parse JSON response. Raises on failure."""
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user}],
@@ -303,6 +347,7 @@ def analyze_with_claude(
     screener_results: dict,
     config: dict,
     crypto_results: dict | None = None,
+    recent_losers: list[str] | None = None,
 ) -> dict:
     """
     Main entry point. Accepts stock screener output + optional crypto screener output.
@@ -317,19 +362,24 @@ def analyze_with_claude(
         print("[ai_analyzer] Building crypto candidates payload...")
         crypto_candidates = _build_crypto_candidates(crypto_results)
 
-    user_prompt = _build_user_prompt(stock_candidates, crypto_candidates, config)
+    user_prompt = _build_user_prompt(
+        stock_candidates, crypto_candidates, config,
+        recent_losers=recent_losers or [],
+    )
 
-    print("[ai_analyzer] Calling Claude API (stocks + crypto)...")
+    # Sonnet for main analysis — quality matters for picks
+    print("[ai_analyzer] Calling Claude Sonnet (stocks + crypto)...")
     try:
-        picks = _call_claude(SYSTEM_PROMPT, user_prompt)
+        picks = _call_claude(SYSTEM_PROMPT, user_prompt, model="claude-sonnet-4-6")
         print("[ai_analyzer] Claude response parsed successfully.")
         return picks
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
-        print(f"[ai_analyzer] Parse error on first attempt ({exc}). Retrying with strict prompt...")
+        print(f"[ai_analyzer] Parse error on first attempt ({exc}). Retrying with Haiku...")
 
+    # Haiku for retry — just JSON reformatting, not fresh analysis
     try:
-        picks = _call_claude(STRICT_RETRY_SYSTEM, user_prompt)
-        print("[ai_analyzer] Retry succeeded.")
+        picks = _call_claude(STRICT_RETRY_SYSTEM, user_prompt, model="claude-haiku-4-5-20251001")
+        print("[ai_analyzer] Haiku retry succeeded.")
         return picks
     except Exception as exc2:
         print(f"[ai_analyzer] Claude analysis failed after retry: {exc2}")
