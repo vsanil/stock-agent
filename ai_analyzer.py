@@ -238,13 +238,13 @@ CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
 
 {_build_risk_profile_block(config.get('risk_profile', 'moderate'))}
 
-{f"""AVOID REPEAT LOSERS (HARD RULE):
-  These tickers lost money in the last 14 days — DO NOT re-pick them today:
-  {', '.join(recent_losers)}
-  If a watchlist ticker appears here, still include it but cap conviction at ★★★.""" if recent_losers else ""}
+{("AVOID REPEAT LOSERS (HARD RULE):\n"
+   "  These tickers lost money in the last 14 days — DO NOT re-pick them today:\n"
+   f"  {', '.join(recent_losers)}\n"
+   "  If a watchlist ticker appears here, still include it but cap conviction at ★★★.") if recent_losers else ""}
 
-{f"""EXCLUDED SECTORS (HARD RULE — ZERO EXCEPTIONS):
-  Never pick stocks from these sectors regardless of score: {', '.join(config.get('excluded_sectors', []))}""" if config.get('excluded_sectors') else ""}
+{("EXCLUDED SECTORS (HARD RULE — ZERO EXCEPTIONS):\n"
+   f"  Never pick stocks from these sectors regardless of score: {', '.join(config.get('excluded_sectors', []))}") if config.get('excluded_sectors') else ""}
 
 Stock Candidates:
 {json.dumps(stock_candidates, indent=2)}
