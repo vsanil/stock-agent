@@ -5,10 +5,16 @@ Replaces whatsapp.py. Uses Telegram Bot API via plain requests (no heavy SDK).
 
 import os
 import time
+import html
 import requests
 from datetime import date
 
 from config_manager import get_config, update_config, update_config_multi, reset_config, load_picks
+
+
+def _esc(text) -> str:
+    """HTML-escape dynamic content so <, >, & don't break Telegram's parser."""
+    return html.escape(str(text)) if text else ""
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_MESSAGE_LENGTH = 4096   # Telegram limit (much larger than WhatsApp)
@@ -183,7 +189,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
 
     lines = [
         f"<b>📊 Daily Picks — {today}</b>",
-        f"<i>{picks.get('daily_summary', '')}</i>",
+        f"<i>{_esc(picks.get('daily_summary', ''))}</i>",
     ]
     if macro_line:
         lines.append(macro_line)
@@ -193,13 +199,13 @@ def format_daily_message(picks: dict, config: dict) -> str:
         st_body = []
         for i, s in enumerate(st_picks, 1):
             entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
-            earnings_tag = f"  🗓️ Earnings {s['earnings_date']}" if s.get("earnings_date") else ""
+            earnings_tag = f"  🗓️ Earnings {_esc(s['earnings_date'])}" if s.get("earnings_date") else ""
             alloc = s.get("allocation")
             alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
             st_body += [
-                f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}{earnings_tag}",
+                f"{i}. <b>{_esc(s.get('ticker'))}</b> · {_esc(_short_company(s.get('company', '')))}  {_stars(s.get('conviction', 3))}{earnings_tag}",
                 f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
-                f"   {s.get('thesis')}",
+                f"   {_esc(s.get('thesis'))}",
             ]
         lines += [
             "",
@@ -216,9 +222,9 @@ def format_daily_message(picks: dict, config: dict) -> str:
             alloc = s.get("allocation")
             alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
             lt_body += [
-                f"{i}. <b>{s.get('ticker')}</b> · {_short_company(s.get('company', ''))}  {_stars(s.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {s.get('horizon')}{alloc_str}",
-                f"   {s.get('thesis')}",
+                f"{i}. <b>{_esc(s.get('ticker'))}</b> · {_esc(_short_company(s.get('company', '')))}  {_stars(s.get('conviction', 3))}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {_esc(s.get('horizon'))}{alloc_str}",
+                f"   {_esc(s.get('thesis'))}",
             ]
         lines += [
             "",
@@ -235,9 +241,9 @@ def format_daily_message(picks: dict, config: dict) -> str:
             alloc = c.get("allocation")
             alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
             cst_body += [
-                f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
+                f"{i}. <b>{_esc(c.get('symbol'))}</b> · {_esc(_short_company(c.get('name', '')))}  {_stars(c.get('conviction', 3))}",
                 f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
-                f"   {c.get('thesis')}",
+                f"   {_esc(c.get('thesis'))}",
             ]
         lines += [
             "",
@@ -254,9 +260,9 @@ def format_daily_message(picks: dict, config: dict) -> str:
             alloc = c.get("allocation")
             alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
             clt_body += [
-                f"{i}. <b>{c.get('symbol')}</b> · {_short_company(c.get('name', ''))}  {_stars(c.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {c.get('horizon')}{alloc_str}",
-                f"   {c.get('thesis')}",
+                f"{i}. <b>{_esc(c.get('symbol'))}</b> · {_esc(_short_company(c.get('name', '')))}  {_stars(c.get('conviction', 3))}",
+                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {_esc(c.get('horizon'))}{alloc_str}",
+                f"   {_esc(c.get('thesis'))}",
             ]
         lines += [
             "",
@@ -288,7 +294,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         if s and s != "Unknown" and s not in seen_sectors:
             sector_list.append(s)
             seen_sectors.add(s)
-    sector_line = f"🏭 <b>Sectors today:</b> {', '.join(sector_list)}" if sector_list else ""
+    sector_line = f"🏭 <b>Sectors today:</b> {_esc(', '.join(sector_list))}" if sector_list else ""
 
     lines += [
         "",
