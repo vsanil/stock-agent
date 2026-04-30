@@ -183,6 +183,28 @@ def _build_user_prompt(
     config: dict,
     recent_losers: list[str] | None = None,
 ) -> str:
+    # Pre-build conditional blocks (backslashes not allowed inside f-string expressions)
+    if recent_losers:
+        losers_block = (
+            "AVOID REPEAT LOSERS (HARD RULE):\n"
+            "  These tickers lost money in the last 14 days — DO NOT re-pick them today:\n"
+            "  " + ", ".join(recent_losers) + "\n"
+            "  If a watchlist ticker appears here, still include it but cap conviction at ★★★."
+        )
+    else:
+        losers_block = ""
+
+    excluded = config.get("excluded_sectors", [])
+    if excluded:
+        excluded_block = (
+            "EXCLUDED SECTORS (HARD RULE — ZERO EXCEPTIONS):\n"
+            "  Never pick stocks from these sectors regardless of score: " + ", ".join(excluded)
+        )
+    else:
+        excluded_block = ""
+
+    risk_block = _build_risk_profile_block(config.get("risk_profile", "moderate"))
+
     return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
 
 STOCKS:
@@ -236,15 +258,11 @@ CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
   - If a coin scores well in both categories, place it only in the category where it scores highest.
   - Fill the other slot with the next-best coin that does NOT already appear in any category.
 
-{_build_risk_profile_block(config.get('risk_profile', 'moderate'))}
+{risk_block}
 
-{("AVOID REPEAT LOSERS (HARD RULE):\n"
-   "  These tickers lost money in the last 14 days — DO NOT re-pick them today:\n"
-   f"  {', '.join(recent_losers)}\n"
-   "  If a watchlist ticker appears here, still include it but cap conviction at ★★★.") if recent_losers else ""}
+{losers_block}
 
-{("EXCLUDED SECTORS (HARD RULE — ZERO EXCEPTIONS):\n"
-   f"  Never pick stocks from these sectors regardless of score: {', '.join(config.get('excluded_sectors', []))}") if config.get('excluded_sectors') else ""}
+{excluded_block}
 
 Stock Candidates:
 {json.dumps(stock_candidates, indent=2)}
