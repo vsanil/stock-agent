@@ -208,6 +208,143 @@ def get_performance_stats(asset_type: str | None = None) -> dict | None:
     }
 
 
+def manual_open_trade(ticker: str, bought_price: float, asset_type: str = "stock",
+                      shares: float | None = None, allocation: float | None = None,
+                      target_price: float | None = None, stop_loss: float | None = None) -> dict:
+    """
+    Log a trade the user actually placed.
+    If target/stop not provided, defaults to +8% target / -5% stop.
+    Returns the trade dict that was saved.
+    """
+    today = date.today().isoformat()
+    log   = load_trade_log()
+
+    # Default target/stop based on bought price
+    if target_price is None:
+        target_price = round(bought_price * 1.08, 2)
+    if stop_loss is None:
+        stop_loss = round(bought_price * 0.95, 2)
+
+    # Derive allocation from shares if provided
+    if allocation is None and shares is not None:
+        allocation = round(bought_price * shares, 2)
+
+    trade = {
+        "ticker":       ticker.upper(),
+        "asset_type":   asset_type,
+        "entry_price":  round(bought_price, 2),
+        "target_price": target_price,
+        "stop_loss":    stop_loss,
+        "allocation":   allocation,
+        "conviction":   None,
+        "thesis":       "Manually logged",
+        "opened_date":  today,
+        "shares":       shares,
+        "manual":       True,
+    }
+
+    # Remove existing open entry for same ticker to avoid duplicates
+    log["open"] = [t for t in log["open"] if t["ticker"] != ticker.upper()]
+    log["open"].append(trade)
+    save_trade_log(log)
+    print(f"[trade_logger] Manually opened {ticker.upper()} @ ${bought_price}")
+    return trade
+
+
+def manual_close_trade(ticker: str, sold_price: float) -> dict | None:
+    """
+    Log that the user sold a position. Finds the open trade, closes it,
+    computes P&L. Returns closed trade dict, or None if ticker not found.
+    """
+    today = date.today().isoformat()
+    log   = load_trade_log()
+
+    match = None
+    remaining = []
+    for t in log["open"]:
+        if t["ticker"] == ticker.upper() and match is None:
+            match = t
+        else:
+            remaining.append(t)
+
+    if not match:
+        return None
+
+    entry      = float(match.get("entry_price") or sold_price)
+    allocation = float(match.get("allocation") or 0)
+    shares     = match.get("shares")
+    return_pct = (sold_price - entry) / entry * 100
+
+    if allocation == 0 and shares:
+        allocation = entry * float(shares)
+
+    gain_usd = round(allocation * return_pct / 100, 2)
+
+    closed = {
+        **match,
+        "closed_date":  today,
+        "closed_price": round(sold_price, 2),
+        "outcome":      "manual",
+        "return_pct":   round(return_pct, 2),
+        "gain_usd":     gain_usd,
+    }
+    log["open"]   = remaining
+    log["closed"].append(closed)
+    save_trade_log(log)
+    print(f"[trade_logger] Manually closed {ticker.upper()} @ ${sold_price} ({return_pct:+.1f}%)")
+    return closed
+
+
+def cancel_trade(ticker: str) -> dict | None:
+    """
+    Remove an open position without recording it as a closed trade.
+    Used to undo an accidental /bought. Returns removed trade or None if not found.
+    """
+    log   = load_trade_log()
+    match = None
+    remaining = []
+    for t in log["open"]:
+        if t["ticker"] == ticker.upper() and match is None:
+            match = t
+        else:
+            remaining.append(t)
+    if match:
+        log["open"] = remaining
+        save_trade_log(log)
+        print(f"[trade_logger] Cancelled open position: {ticker.upper()}")
+    return match
+
+
+def reopen_trade(ticker: str) -> dict | None:
+    """
+    Move the most recently closed trade for a ticker back to open.
+    Used to undo an accidental /sold. Returns reopened trade or None if not found.
+    """
+    log    = load_trade_log()
+    closed = log.get("closed", [])
+
+    # Find the most recent closed entry for this ticker
+    match_idx = None
+    for i in range(len(closed) - 1, -1, -1):
+        if closed[i]["ticker"] == ticker.upper():
+            match_idx = i
+            break
+
+    if match_idx is None:
+        return None
+
+    trade = closed.pop(match_idx)
+    # Strip closed-only fields before moving back to open
+    for field in ("closed_date", "closed_price", "outcome", "return_pct", "gain_usd"):
+        trade.pop(field, None)
+
+    log["closed"] = closed
+    log["open"].append(trade)
+    save_trade_log(log)
+    print(f"[trade_logger] Reopened position: {ticker.upper()}")
+    return trade
+
+
 def get_weekly_closed_trades() -> list[dict]:
     """Return trades closed this calendar week (Mon–today)."""
     from datetime import timedelta

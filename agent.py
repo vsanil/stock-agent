@@ -360,6 +360,50 @@ def run_confirmation():
     except Exception as exc:
         print(f"[agent] Earnings warning check failed (non-critical): {exc}")
 
+    # ── Portfolio position alerts (all manually logged trades) ───────────────
+    try:
+        import yfinance as yf
+        log = load_trade_log()
+        manual_open = [t for t in log.get("open", []) if t.get("manual")]
+        if manual_open:
+            syms  = [t["ticker"] for t in manual_open]
+            pdata = yf.download(" ".join(syms), period="1d", interval="1m",
+                                progress=False, auto_adjust=True)
+            for t in manual_open:
+                ticker  = t["ticker"]
+                entry   = float(t.get("entry_price") or 0)
+                target  = t.get("target_price")
+                stop    = t.get("stop_loss")
+                try:
+                    if len(syms) == 1:
+                        cur = float(pdata["Close"].dropna().iloc[-1])
+                    else:
+                        cur = float(pdata["Close"][ticker].dropna().iloc[-1])
+                except Exception:
+                    continue
+                if not entry:
+                    continue
+                ret_pct = (cur - entry) / entry * 100
+                sign    = "+" if ret_pct >= 0 else ""
+                # Near stop (within 2%)
+                if stop and cur <= float(stop) * 1.02:
+                    _alert(
+                        f"⚠️ <b>{ticker} NEAR STOP LOSS</b>\n"
+                        f"Current <code>${cur:.2f}</code>  Stop <code>${stop}</code>  "
+                        f"Return {sign}{ret_pct:.1f}%\n"
+                        f"<i>Consider cutting the position to limit losses.</i>"
+                    )
+                # Near target (within 2%)
+                elif target and cur >= float(target) * 0.98:
+                    _alert(
+                        f"🎯 <b>{ticker} NEAR TARGET</b>\n"
+                        f"Current <code>${cur:.2f}</code>  Target <code>${target}</code>  "
+                        f"Return {sign}{ret_pct:.1f}%\n"
+                        f"<i>Consider taking profit or raising your stop.</i>"
+                    )
+    except Exception as exc:
+        print(f"[agent] Portfolio alert check failed (non-critical): {exc}")
+
     message = format_confirmation_message(picks, current_prices)
     _send_or_print(message, label="10:30 AM Confirmation")
 
@@ -394,6 +438,39 @@ def run_close_check():
             print("[agent] 3:30 PM close check: no trades hit. No message sent.")
     except Exception as exc:
         print(f"[agent] Trade close check failed (non-critical): {exc}")
+
+    # ── End-of-day portfolio summary for manually logged positions ────────────
+    try:
+        import yfinance as yf
+        log = load_trade_log()
+        manual_open = [t for t in log.get("open", []) if t.get("manual")]
+        if manual_open:
+            syms   = [t["ticker"] for t in manual_open]
+            pdata  = yf.download(" ".join(syms), period="1d", interval="1m",
+                                 progress=False, auto_adjust=True)
+            alerts = []
+            for t in manual_open:
+                ticker = t["ticker"]
+                entry  = float(t.get("entry_price") or 0)
+                target = t.get("target_price")
+                stop   = t.get("stop_loss")
+                try:
+                    cur = float(pdata["Close"].dropna().iloc[-1]) if len(syms) == 1 \
+                          else float(pdata["Close"][ticker].dropna().iloc[-1])
+                except Exception:
+                    continue
+                if not entry:
+                    continue
+                ret_pct = (cur - entry) / entry * 100
+                sign    = "+" if ret_pct >= 0 else ""
+                emoji   = "🟢" if ret_pct >= 0 else "🔴"
+                to_t    = f"  {((float(target)/cur-1)*100):+.1f}% to target" if target else ""
+                to_s    = f"  {((float(stop)/cur-1)*100):+.1f}% to stop" if stop else ""
+                alerts.append(f"{emoji} <b>{ticker}</b> <code>${cur:.2f}</code>  {sign}{ret_pct:.1f}%{to_t}{to_s}")
+            if alerts:
+                _alert("📊 <b>End-of-day portfolio check</b>\n\n" + "\n".join(alerts))
+    except Exception as exc:
+        print(f"[agent] End-of-day portfolio summary failed (non-critical): {exc}")
 
 
 # ── Weekly recap (Saturday morning) ──────────────────────────────────────────
