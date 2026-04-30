@@ -158,7 +158,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
     if macro_line:
         lines.append(macro_line)
 
-    # ── Short-term stocks  ▸▸▸ collapsible ───────────────────────────────────
+    # ── Short-term stocks ────────────────────────────────────────────────────
     if st_picks:
         st_body = []
         for i, s in enumerate(st_picks, 1):
@@ -174,11 +174,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += [
             "",
             "▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸",
-            f"📈 <b>Short Term Stocks</b>  <code>${short_budget}/trade</code>  <i>👆 tap to reveal</i>",
+            f"📈 <b>Short Term Stocks</b>  <code>${short_budget}/trade</code>",
             "<tg-spoiler>" + "\n".join(st_body) + "</tg-spoiler>",
         ]
 
-    # ── Long-term stocks  ━━━ collapsible ────────────────────────────────────
+    # ── Long-term stocks ─────────────────────────────────────────────────────
     if lt_picks:
         lt_body = []
         for i, s in enumerate(lt_picks, 1):
@@ -193,11 +193,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += [
             "",
             "━━━━━━━━━━━━━━━━━━━━",
-            f"🏦 <b>Long Term Stocks</b>  <code>${long_budget}/mo DCA</code>  <i>👆 tap to reveal</i>",
+            f"🏦 <b>Long Term Stocks</b>  <code>${long_budget}/mo DCA</code>",
             "<tg-spoiler>" + "\n".join(lt_body) + "</tg-spoiler>",
         ]
 
-    # ── Crypto short-term  ┈ ┈ ┈ collapsible ────────────────────────────────
+    # ── Crypto short-term ────────────────────────────────────────────────────
     if cst_picks:
         cst_body = []
         for i, c in enumerate(cst_picks, 1):
@@ -212,11 +212,11 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += [
             "",
             "┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈",
-            f"🪙 <b>Crypto Short Term</b>  <code>${crypto_st_budget}/trade</code>  <i>⚡ HIGH RISK · 👆 tap</i>",
+            f"🪙 <b>Crypto Short Term</b>  <code>${crypto_st_budget}/trade</code>  ⚡ HIGH RISK",
             "<tg-spoiler>" + "\n".join(cst_body) + "</tg-spoiler>",
         ]
 
-    # ── Crypto long-term  ◆ ◆ ◆ collapsible ─────────────────────────────────
+    # ── Crypto long-term ─────────────────────────────────────────────────────
     if clt_picks:
         clt_body = []
         for i, c in enumerate(clt_picks, 1):
@@ -231,7 +231,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines += [
             "",
             "◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆",
-            f"💎 <b>Crypto Long Term</b>  <code>${crypto_lt_budget}/mo DCA</code>  <i>👆 tap to reveal</i>",
+            f"💎 <b>Crypto Long Term</b>  <code>${crypto_lt_budget}/mo DCA</code>",
             "<tg-spoiler>" + "\n".join(clt_body) + "</tg-spoiler>",
         ]
 
@@ -272,23 +272,24 @@ def format_daily_message(picks: dict, config: dict) -> str:
         "⚠️ <i>Not financial advice.</i>",
         "",
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄",
-        "📋 <b>Commands</b>  <i>👆 tap to expand</i>",
+        "📋 <b>Commands</b>  <i>(tap to expand)</i>",
         "<tg-spoiler>"
         "── Daily ──\n"
-        "/today · /prices · /perf\n"
-        "/explain microsoft  — ask about any pick\n"
+        "/today  /prices  /perf\n"
+        "<code>/explain why is nvidia picked</code>\n"
         "\n── Watchlist &amp; Filters ──\n"
-        "/watch tesla nvidia  — always include these\n"
+        "<code>/watch tesla nvidia</code>  — always evaluate these\n"
         "/watch none  — clear watchlist\n"
-        "/exclude energy  — skip a sector\n"
+        "<code>/exclude energy utilities</code>  — skip sectors\n"
         "/exclude none  — clear exclusions\n"
-        "/watchlist  — show current AI settings\n"
+        "/watchlist  — show AI settings\n"
         "\n── Risk &amp; Budgets ──\n"
-        "/set_risk aggressive  — conservative | moderate | aggressive\n"
-        "/set_st 50 · /set_lt 100\n"
-        "/set_cst 30 · /set_clt 50\n"
+        "<code>/set_risk conservative</code>  or  <code>aggressive</code>\n"
+        "<code>/set_st 50</code>  <code>/set_lt 100</code>\n"
+        "<code>/set_cst 30</code>  <code>/set_clt 50</code>\n"
         "\n── Control ──\n"
-        "/status · /pause · /resume · /reset · /help"
+        "/status  /pause  /resume  /reset  /help\n"
+        "\n<i>💡 Tap <code>code blocks</code> to copy, then paste &amp; edit before sending</i>"
         "</tg-spoiler>",
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄",
     ]
