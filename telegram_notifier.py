@@ -9,7 +9,10 @@ import html
 import requests
 from datetime import date
 
-from config_manager import get_config, update_config, update_config_multi, reset_config, load_picks
+from config_manager import (
+    get_config, update_config, update_config_multi, reset_config, load_picks,
+    load_pending_state, save_pending_state, clear_pending_state,
+)
 
 
 def _esc(text) -> str:
@@ -304,29 +307,18 @@ def format_daily_message(picks: dict, config: dict) -> str:
     if sector_line:
         lines.append(sector_line)
 
-    # Commands — blockquote expandable
-    # Non-param commands: plain /command → blue link, tap sends immediately
-    # Param commands: <code>/cmd </code> → copies on tap (gray monospace)
-    #                 <i>example</i> → italic hint, not copied
+    # Commands — all plain blue links; parameterized commands prompt for input on tap
     lines += [
         "",
         "<blockquote expandable>📋 <b>COMMANDS</b>\n"
         "\n<b>Daily</b>\n"
-        "/today  /prices  /perf  /portfolio\n"
-        "<code>/explain </code><i>apple  ·  why is NVDA picked?</i>\n"
+        "/today  /prices  /perf  /portfolio  /explain\n"
         "\n<b>My Trades</b>\n"
-        "<code>/bought </code><i>apple  ·  AAPL 182.50  ·  AAPL 182.50 5</i>\n"
-        "<code>/sold </code><i>apple  ·  AAPL 197.10</i>\n"
-        "<code>/cancel </code><i>apple</i>\n"
+        "/bought  /sold  /cancel\n"
         "\n<b>Watchlist &amp; Filters</b>\n"
-        "<code>/watch </code><i>NVDA TSLA  ·  nvidia tesla</i>\n"
-        "<code>/watch </code><i>none  — clear watchlist</i>\n"
-        "<code>/exclude </code><i>energy  ·  oil stocks</i>\n"
-        "<code>/exclude </code><i>none  — clear exclusions</i>\n"
-        "/watchlist\n"
+        "/watch  /exclude  /watchlist\n"
         "\n<b>Risk &amp; Budgets</b>\n"
-        "<code>/set_risk </code><i>conservative · moderate · aggressive</i>\n"
-        "<code>/set_st </code><i>30</i>   <code>/set_lt </code><i>50</i>   <code>/set_cst </code><i>20</i>   <code>/set_clt </code><i>30</i>\n"
+        "/set_risk  /set_st  /set_lt  /set_cst  /set_clt\n"
         "\n<b>Control</b>\n"
         "/status  /pause  /resume  /reset  /help"
         "</blockquote>",
@@ -449,9 +441,24 @@ def format_weekly_recap_message(recap: dict) -> str:
 
 def handle_incoming_command(message_text: str, chat_id: str | None = None) -> str:
     """Parse and execute a Telegram command. Sends reply and returns reply text."""
-    text  = message_text.strip().upper()
-    reply = _parse_and_execute(text, original=message_text.strip())
-    send_message(reply, chat_id=chat_id)
+    chat_id = chat_id or _chat_id()
+    text    = message_text.strip()
+
+    # Non-slash message while a command is waiting for a param → handle as reply
+    if not text.startswith("/"):
+        state = load_pending_state(chat_id)
+        if state:
+            reply = _handle_pending_reply(state, text, chat_id)
+            if reply:
+                send_message(reply, chat_id=chat_id)
+            return reply
+    else:
+        # Any new slash command cancels pending state
+        clear_pending_state(chat_id)
+
+    reply = _parse_and_execute(text.upper(), original=text, chat_id=chat_id)
+    if reply:
+        send_message(reply, chat_id=chat_id)
     return reply
 
 
@@ -652,6 +659,12 @@ def handle_callback_query(callback_query: dict) -> None:
     parts = data.split("|")
     action = parts[0] if parts else ""
 
+    if action == "cancel_pending":
+        target_chat = parts[1] if len(parts) > 1 else chat_id
+        clear_pending_state(target_chat)
+        send_message("👍 Cancelled.", chat_id=chat_id)
+        return
+
     if action == "buy":
         ticker     = parts[1] if len(parts) > 1 else ""
         price_raw  = parts[2] if len(parts) > 2 else ""
@@ -781,6 +794,246 @@ def handle_callback_query(callback_query: dict) -> None:
         )
 
 
+# ── Prompts for param commands ────────────────────────────────────────────────
+
+_PARAM_PROMPTS: dict[str, str] = {
+    "bought":   ("🛒 <b>What did you buy?</b>\n"
+                 "<i>e.g.</i>  <code>apple</code>  ·  <code>AAPL 182.50</code>  ·  <code>AAPL 182.50 5</code>"),
+    "sold":     ("💸 <b>What did you sell?</b>\n"
+                 "<i>e.g.</i>  <code>apple</code>  ·  <code>AAPL 197.10</code>"),
+    "cancel":   ("↩️ <b>Which trade to undo?</b>\n"
+                 "<i>e.g.</i>  <code>apple</code>  ·  <code>AAPL</code>"),
+    "explain":  ("💬 <b>What would you like to know?</b>\n"
+                 "<i>e.g.</i>  <code>why is NVDA picked?</code>  ·  <code>apple thesis</code>"),
+    "watch":    ("👀 <b>Which tickers to watch?</b>\n"
+                 "<i>e.g.</i>  <code>NVDA TSLA</code>  ·  <code>nvidia tesla</code>"),
+    "exclude":  ("🚫 <b>Which sector to exclude?</b>\n"
+                 "<i>e.g.</i>  <code>energy</code>  ·  <code>oil stocks</code>"),
+    "set_risk": ("⚖️ <b>Risk level?</b>\n"
+                 "<code>conservative</code>   ·   <code>moderate</code>   ·   <code>aggressive</code>"),
+    "set_st":   "💰 <b>Stock short-term budget per trade?</b>  <i>e.g.</i>  <code>30</code>",
+    "set_lt":   "💰 <b>Stock long-term monthly budget?</b>  <i>e.g.</i>  <code>50</code>",
+    "set_cst":  "💰 <b>Crypto short-term budget per trade?</b>  <i>e.g.</i>  <code>20</code>",
+    "set_clt":  "💰 <b>Crypto long-term monthly budget?</b>  <i>e.g.</i>  <code>30</code>",
+}
+
+
+def _prompt_for_param(command: str, chat_id: str) -> None:
+    """Save pending state and send the parameter-request prompt with a Cancel button."""
+    prompt = _PARAM_PROMPTS.get(command, f"What value for /{command}?")
+    save_pending_state(chat_id, command)
+    send_inline_keyboard(
+        prompt,
+        [[{"text": "❌ Cancel", "callback_data": f"cancel_pending|{chat_id}"}]],
+        chat_id=chat_id,
+    )
+
+
+# ── Extracted buy/sell execution (shared by direct + conversational paths) ────
+
+def _execute_bought(ticker: str, price_raw, shares_raw, chat_id: str) -> str:
+    from trade_logger import manual_open_trade
+    price: float | None = None
+    if price_raw:
+        try:
+            price = float(str(price_raw).strip())
+        except ValueError:
+            pass
+    if price is None:
+        price = _fetch_live_price(ticker)
+    if price is None:
+        return (f"⚠️ Could not fetch price for <b>{ticker}</b>. "
+                f"Reply with the price, e.g. <code>182.50</code>")
+
+    shares: float | None = None
+    if shares_raw:
+        try:
+            shares = float(str(shares_raw).strip())
+        except (ValueError, TypeError):
+            pass
+
+    target = stop = None
+    picks  = load_picks()
+    if picks:
+        all_st = (picks.get("stocks", {}).get("short_term", []) +
+                  picks.get("crypto", {}).get("short_term", []))
+        for p in all_st:
+            sym = p.get("ticker") or p.get("symbol", "")
+            if sym.upper() == ticker:
+                target = p.get("target_price")
+                stop   = p.get("stop_loss")
+                break
+
+    crypto_symbols = {
+        "BTC","ETH","SOL","BNB","XRP","ADA","DOGE","AVAX","DOT","MATIC",
+        "LINK","UNI","ATOM","LTC","BCH","ALGO","XLM","VET","ICP","FIL",
+    }
+    asset_type = "crypto" if ticker in crypto_symbols else "stock"
+
+    trade = manual_open_trade(ticker, price, asset_type=asset_type,
+                              shares=shares, target_price=target, stop_loss=stop)
+
+    alloc_str  = f"  · <code>${trade['allocation']:.2f}</code> deployed" if trade.get("allocation") else ""
+    shares_str = f"  · {shares} shares" if shares else ""
+    return (
+        f"✅ <b>Logged: bought {ticker}</b>\n"
+        f"Entry:  <code>${trade['entry_price']}</code>{shares_str}{alloc_str}\n"
+        f"Target: <code>${trade['target_price']}</code>  "
+        f"<i>(+{((trade['target_price']/trade['entry_price'])-1)*100:.1f}%)</i>\n"
+        f"Stop:   <code>${trade['stop_loss']}</code>  "
+        f"<i>({((trade['stop_loss']/trade['entry_price'])-1)*100:.1f}%)</i>\n"
+        f"<i>I'll check this at 10:30 AM and 3:30 PM and alert if target/stop is hit.</i>"
+    )
+
+
+def _execute_sold(ticker: str, price_raw, chat_id: str) -> str:
+    from trade_logger import manual_close_trade
+    price: float | None = None
+    if price_raw:
+        try:
+            price = float(str(price_raw).strip())
+        except ValueError:
+            pass
+    if price is None:
+        price = _fetch_live_price(ticker)
+    if price is None:
+        return (f"⚠️ Could not fetch price for <b>{ticker}</b>. "
+                f"Reply with the price, e.g. <code>197.10</code>")
+
+    closed = manual_close_trade(ticker, price)
+    if not closed:
+        return f"⚠️ No open position found for <b>{ticker}</b>. Use /portfolio to see open trades."
+
+    ret   = closed["return_pct"]
+    gain  = closed["gain_usd"]
+    emoji = "✅" if ret >= 0 else "🔴"
+    sign  = "+" if ret >= 0 else ""
+    gsign = "+" if gain >= 0 else ""
+    return (
+        f"{emoji} <b>Closed: {ticker}</b>\n"
+        f"Entry:  <code>${closed['entry_price']}</code>\n"
+        f"Exit:   <code>${closed['closed_price']}</code>\n"
+        f"Return: <b>{sign}{ret}%</b>  P&amp;L: <code>{gsign}${abs(gain):.2f}</code>\n"
+        f"<i>Saved to trade history.</i>"
+    )
+
+
+# ── Pending reply handler ─────────────────────────────────────────────────────
+
+def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
+    """
+    Called when the user sends a plain message while a pending command state exists.
+    Routes to the appropriate handler based on the saved command + step.
+    """
+    command = state["command"]
+    step    = state.get("step", 1)
+    data    = state.get("data", {})
+
+    # State already consumed — always clear it first
+    clear_pending_state(chat_id)
+
+    # ── /bought multi-step ────────────────────────────────────────────────────
+    if command == "bought":
+        if step == 2:
+            # User is replying with a price (or blank = live price)
+            ticker     = data.get("ticker", "")
+            shares_raw = data.get("shares")
+            price_raw  = text.strip() or None
+            return _execute_bought(ticker, price_raw, shares_raw, chat_id)
+
+        # Step 1: parse "apple" / "AAPL 182.50" / "AAPL 182.50 5"
+        parts     = text.strip().split()
+        name_raw  = parts[0] if parts else ""
+        price_raw = parts[1] if len(parts) >= 2 else None
+        shares_raw = parts[2] if len(parts) >= 3 else None
+
+        if not name_raw:
+            return "⚠️ Please tell me which stock you bought."
+
+        candidates = _resolve_ticker_candidates(name_raw)
+        if len(candidates) > 1:
+            price_enc  = price_raw  or ""
+            shares_enc = shares_raw or ""
+            buttons = [[{"text": f"{c['ticker']} — {c['name']}",
+                         "callback_data": f"buy|{c['ticker']}|{price_enc}|{shares_enc}"}]
+                       for c in candidates]
+            send_inline_keyboard(f"🔍 Which stock did you mean by <b>{_esc(name_raw)}</b>?",
+                                 buttons, chat_id=chat_id)
+            return ""
+
+        ticker = candidates[0]["ticker"]
+        if price_raw is None:
+            # Need price — go to step 2
+            save_pending_state(chat_id, "bought", step=2, data={"ticker": ticker})
+            send_inline_keyboard(
+                f"Got it — <b>{ticker}</b>. At what price did you buy?\n"
+                f"<i>Send blank to use live price</i>",
+                [[{"text": "❌ Cancel", "callback_data": f"cancel_pending|{chat_id}"}]],
+                chat_id=chat_id,
+            )
+            return ""
+
+        return _execute_bought(ticker, price_raw, shares_raw, chat_id)
+
+    # ── /sold multi-step ──────────────────────────────────────────────────────
+    if command == "sold":
+        if step == 2:
+            ticker    = data.get("ticker", "")
+            price_raw = text.strip() or None
+            return _execute_sold(ticker, price_raw, chat_id)
+
+        parts     = text.strip().split()
+        name_raw  = parts[0] if parts else ""
+        price_raw = parts[1] if len(parts) >= 2 else None
+
+        if not name_raw:
+            return "⚠️ Please tell me which stock you sold."
+
+        candidates = _resolve_ticker_candidates(name_raw)
+        if len(candidates) > 1:
+            price_enc = price_raw or ""
+            buttons = [[{"text": f"{c['ticker']} — {c['name']}",
+                         "callback_data": f"sell|{c['ticker']}|{price_enc}"}]
+                       for c in candidates]
+            send_inline_keyboard(f"🔍 Which stock did you mean?", buttons, chat_id=chat_id)
+            return ""
+
+        ticker = candidates[0]["ticker"]
+        if price_raw is None:
+            save_pending_state(chat_id, "sold", step=2, data={"ticker": ticker})
+            send_inline_keyboard(
+                f"Got it — <b>{ticker}</b>. At what price did you sell?\n"
+                f"<i>Send blank to use live price</i>",
+                [[{"text": "❌ Cancel", "callback_data": f"cancel_pending|{chat_id}"}]],
+                chat_id=chat_id,
+            )
+            return ""
+
+        return _execute_sold(ticker, price_raw, chat_id)
+
+    # ── Single-step param commands ────────────────────────────────────────────
+    if command == "cancel":
+        return _parse_and_execute(f"CANCEL {text}", original=f"/cancel {text}", chat_id=chat_id)
+
+    if command == "explain":
+        return _explain_pick(text)
+
+    if command == "watch":
+        return _parse_and_execute(f"WATCH {text}", original=f"/watch {text}", chat_id=chat_id)
+
+    if command == "exclude":
+        return _parse_and_execute(f"EXCLUDE {text}", original=f"/exclude {text}", chat_id=chat_id)
+
+    if command == "set_risk":
+        return _parse_and_execute(f"SET RISK {text}", original=text, chat_id=chat_id)
+
+    key_map = {"set_st": "ST", "set_lt": "LT", "set_cst": "CST", "set_clt": "CLT"}
+    if command in key_map:
+        return _parse_and_execute(f"SET {key_map[command]} {text}", original=text, chat_id=chat_id)
+
+    return _handle_natural_language(text)
+
+
 def _handle_natural_language(query: str) -> str:
     """
     Parse a free-text message into a bot command using Claude Haiku, then execute it.
@@ -891,8 +1144,9 @@ Rules:
     return _explain_pick(query)
 
 
-def _parse_and_execute(text: str, original: str = "") -> str:
+def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None) -> str:
     """Parse command string and return reply."""
+    chat_id = chat_id or _chat_id()
 
     # Telegram slash-commands (/help) or plain text (HELP) — normalise both
     text = text.lstrip("/").replace("_", " ")   # /set_st 30 → SET ST 30
@@ -903,6 +1157,10 @@ def _parse_and_execute(text: str, original: str = "") -> str:
             return "📭 No picks for today yet. Check back after 8 AM ET."
         config = get_config()
         return format_daily_message(picks, config)
+
+    if text == "EXPLAIN":
+        _prompt_for_param("explain", chat_id)
+        return ""
 
     if text.startswith("EXPLAIN "):
         # Preserve original casing for the query — strip the command prefix
@@ -998,6 +1256,10 @@ def _parse_and_execute(text: str, original: str = "") -> str:
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
+    if text == "SET RISK":
+        _prompt_for_param("set_risk", chat_id)
+        return ""
+
     if text.startswith("SET RISK "):
         raw     = text[len("SET RISK "):].strip().lower()
         profile = raw if raw in ("conservative", "moderate", "aggressive") else _nl_param("risk", raw).lower()
@@ -1012,6 +1274,10 @@ def _parse_and_execute(text: str, original: str = "") -> str:
         return f"✅ Risk profile → <b>{profile}</b>\n<i>{descriptions[profile]}</i>\nTakes effect tomorrow."
 
     # /exclude energy stocks  |  /exclude oil companies  |  /exclude none
+    if text == "EXCLUDE":
+        _prompt_for_param("exclude", chat_id)
+        return ""
+
     if text.startswith("EXCLUDE "):
         raw_query     = original.lstrip("/")
         sectors_input = raw_query.split(" ", 1)[1].strip() if " " in raw_query else ""
@@ -1030,6 +1296,10 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                 f"<i>To clear: /exclude none</i>")
 
     # /watch tesla/microsoft  |  /watch NVDA TSLA  |  /watch none
+    if text == "WATCH":
+        _prompt_for_param("watch", chat_id)
+        return ""
+
     if text.startswith("WATCH "):
         raw_query     = original.lstrip("/")
         tickers_input = raw_query.split(" ", 1)[1].strip() if " " in raw_query else ""
@@ -1099,6 +1369,13 @@ def _parse_and_execute(text: str, original: str = "") -> str:
             f"Target gain:      {config.get('target_gain_pct')}%"
         )
 
+    # Bare budget commands — prompt for the value
+    if text in ("SET ST", "SET LT", "SET CST", "SET CLT"):
+        cmd_map = {"SET ST": "set_st", "SET LT": "set_lt",
+                   "SET CST": "set_cst", "SET CLT": "set_clt"}
+        _prompt_for_param(cmd_map[text], chat_id)
+        return ""
+
     # SET ST/LT/CST/CLT <n>
     if text.startswith("SET "):
         parts = text.split()
@@ -1133,154 +1410,57 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                 lines.append(f"{label_map.get(k, k)} → ${config[k]}")
             return "\n".join(lines)
 
-    # ── /bought TICKER|name [price] [shares] ─────────────────────────────────
-    # e.g. /bought apple        → resolves AAPL, fetches live price
-    # e.g. /bought AAPL 182.50
-    # e.g. /bought apple 182.50 5
+    # ── /bought [TICKER|name [price] [shares]] ───────────────────────────────
+    if text == "BOUGHT":
+        _prompt_for_param("bought", chat_id)
+        return ""
+
     if text.startswith("BOUGHT "):
-        from trade_logger import manual_open_trade
-        parts = text.split()
-        if len(parts) < 2:
-            return "Usage: <code>/bought apple</code>  or  <code>/bought AAPL 182.50</code>"
+        parts      = text.split()
+        name_raw   = parts[1]
+        price_raw  = parts[2] if len(parts) >= 3 else None
+        shares_raw = parts[3] if len(parts) >= 4 else None
 
-        name_raw  = parts[1]
-        price_raw = parts[2] if len(parts) >= 3 else None
-        shares    = float(parts[3]) if len(parts) >= 4 else None
-
-        # Resolve candidates — show picker if ambiguous
         candidates = _resolve_ticker_candidates(name_raw)
         if len(candidates) > 1:
-            # Encode price+shares into callback_data so they survive the button tap
-            price_enc  = price_raw or ""
-            shares_enc = str(shares) if shares else ""
-            buttons = [[{
-                "text": f"{c['ticker']} — {c['name']}",
-                "callback_data": f"buy|{c['ticker']}|{price_enc}|{shares_enc}",
-            }] for c in candidates]
-            send_inline_keyboard(
-                f"🔍 Which stock did you mean by <b>{name_raw}</b>?",
-                buttons,
-                chat_id=_chat_id(),
-            )
-            return ""   # reply already sent via inline keyboard
+            price_enc  = price_raw  or ""
+            shares_enc = shares_raw or ""
+            buttons = [[{"text": f"{c['ticker']} — {c['name']}",
+                         "callback_data": f"buy|{c['ticker']}|{price_enc}|{shares_enc}"}]
+                       for c in candidates]
+            send_inline_keyboard(f"🔍 Which stock did you mean by <b>{_esc(name_raw)}</b>?",
+                                 buttons, chat_id=chat_id)
+            return ""
 
-        ticker = candidates[0]["ticker"]
-        price: float | None = None
-        if price_raw:
-            try:
-                price = float(price_raw)
-            except ValueError:
-                pass
-        if price is None:
-            price = _fetch_live_price(ticker)
-        if price is None:
-            return f"⚠️ Could not fetch price for <b>{ticker}</b>. Try: <code>/bought {ticker} 182.50</code>"
+        return _execute_bought(candidates[0]["ticker"], price_raw, shares_raw, chat_id)
 
-        # Pull target/stop from today's picks if available
-        target = stop = None
-        picks  = load_picks()
-        if picks:
-            all_st = (picks.get("stocks", {}).get("short_term", []) +
-                      picks.get("crypto", {}).get("short_term", []))
-            for p in all_st:
-                sym = p.get("ticker") or p.get("symbol", "")
-                if sym.upper() == ticker:
-                    target = p.get("target_price")
-                    stop   = p.get("stop_loss")
-                    break
+    # ── /sold [TICKER|name [price]] ──────────────────────────────────────────
+    if text == "SOLD":
+        _prompt_for_param("sold", chat_id)
+        return ""
 
-        asset_type = "crypto" if len(ticker) >= 3 and ticker in (
-            "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "MATIC",
-            "LINK", "UNI", "ATOM", "LTC", "BCH", "ALGO", "XLM", "VET", "ICP", "FIL",
-        ) else "stock"
-
-        trade = manual_open_trade(
-            ticker, price, asset_type=asset_type,
-            shares=shares, target_price=target, stop_loss=stop,
-        )
-
-        alloc_str  = f"  · <code>${trade['allocation']:.2f}</code> deployed" if trade.get("allocation") else ""
-        shares_str = f"  · {shares} shares" if shares else ""
-
-        # Show current market price vs buy price for immediate context
-        live = _fetch_live_price(ticker)
-        if live and live != price:
-            diff     = live - price
-            diff_pct = diff / price * 100
-            sign     = "+" if diff >= 0 else ""
-            market_line = (f"\nMarket now: <code>${live:.2f}</code>  "
-                           f"<i>({sign}{diff_pct:.2f}% vs your entry)</i>")
-        else:
-            market_line = ""
-
-        return (
-            f"✅ <b>Logged: bought {ticker}</b>\n"
-            f"Entry:  <code>${trade['entry_price']}</code>{shares_str}{alloc_str}{market_line}\n"
-            f"Target: <code>${trade['target_price']}</code>  "
-            f"<i>(+{((trade['target_price']/trade['entry_price'])-1)*100:.1f}%)</i>\n"
-            f"Stop:   <code>${trade['stop_loss']}</code>  "
-            f"<i>({((trade['stop_loss']/trade['entry_price'])-1)*100:.1f}%)</i>\n"
-            f"<i>I'll check this at 10:30 AM and 3:30 PM and alert if target/stop is hit.</i>"
-        )
-
-    # ── /sold TICKER|name [price] ─────────────────────────────────────────────
-    # e.g. /sold apple          → resolves AAPL, uses live price
-    # e.g. /sold costco 197.10
     if text.startswith("SOLD "):
-        from trade_logger import manual_close_trade
-        parts = text.split()
-        if len(parts) < 2:
-            return "Usage: <code>/sold apple</code>  or  <code>/sold AAPL 197.10</code>"
-
+        parts     = text.split()
         name_raw  = parts[1]
         price_raw = parts[2] if len(parts) >= 3 else None
 
-        # Resolve candidates — show picker if ambiguous
         candidates = _resolve_ticker_candidates(name_raw)
         if len(candidates) > 1:
             price_enc = price_raw or ""
-            buttons = [[{
-                "text": f"{c['ticker']} — {c['name']}",
-                "callback_data": f"sell|{c['ticker']}|{price_enc}",
-            }] for c in candidates]
-            send_inline_keyboard(
-                f"🔍 Which stock did you mean by <b>{name_raw}</b>?",
-                buttons,
-                chat_id=_chat_id(),
-            )
+            buttons = [[{"text": f"{c['ticker']} — {c['name']}",
+                         "callback_data": f"sell|{c['ticker']}|{price_enc}"}]
+                       for c in candidates]
+            send_inline_keyboard(f"🔍 Which stock did you mean by <b>{_esc(name_raw)}</b>?",
+                                 buttons, chat_id=chat_id)
             return ""
 
-        ticker = candidates[0]["ticker"]
-        price: float | None = None
-        if price_raw:
-            try:
-                price = float(price_raw)
-            except ValueError:
-                pass
-        if price is None:
-            price = _fetch_live_price(ticker)
-        if price is None:
-            return f"⚠️ Could not fetch price for <b>{ticker}</b>. Try: <code>/sold {ticker} 197.10</code>"
-
-        closed = manual_close_trade(ticker, price)
-        if not closed:
-            return f"⚠️ No open position found for <b>{ticker}</b>. Use /positions to see open trades."
-
-        ret    = closed["return_pct"]
-        gain   = closed["gain_usd"]
-        emoji  = "✅" if ret >= 0 else "🔴"
-        sign   = "+" if ret >= 0 else ""
-        gsign  = "+" if gain >= 0 else ""
-        return (
-            f"{emoji} <b>Closed: {ticker}</b>\n"
-            f"Entry:  <code>${closed['entry_price']}</code>\n"
-            f"Exit:   <code>${closed['closed_price']}</code>\n"
-            f"Return: <b>{sign}{ret}%</b>  "
-            f"P&amp;L: <code>{gsign}${abs(gain):.2f}</code>\n"
-            f"<i>Saved to trade history.</i>"
-        )
+        return _execute_sold(candidates[0]["ticker"], price_raw, chat_id)
 
     # ── /cancel — undo accidental /bought or /sold ───────────────────────────
+    if text == "CANCEL":
+        _prompt_for_param("cancel", chat_id)
+        return ""
+
     if text.startswith("CANCEL "):
         from trade_logger import cancel_trade, reopen_trade
         from config_manager import load_trade_log
@@ -1295,7 +1475,7 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                 "callback_data": f"cancel_auto|{c['ticker']}",
             }] for c in candidates]
             send_inline_keyboard(
-                f"🔍 Which stock did you mean?", buttons, chat_id=_chat_id(),
+                f"🔍 Which stock did you mean?", buttons, chat_id=chat_id,
             )
             return ""
 
@@ -1321,7 +1501,7 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                     {"text": "❌ Undo buy",  "callback_data": f"confirm_cancel|{ticker}"},
                     {"text": "↩️ Undo sell", "callback_data": f"confirm_reopen|{ticker}"},
                 ]],
-                chat_id=_chat_id(),
+                chat_id=chat_id,
             )
             return ""
 
@@ -1335,7 +1515,7 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                     {"text": "✅ Yes, undo buy",  "callback_data": f"confirm_cancel|{ticker}"},
                     {"text": "❌ No, keep it",    "callback_data": "cancel_abort"},
                 ]],
-                chat_id=_chat_id(),
+                chat_id=chat_id,
             )
             return ""
 
@@ -1350,7 +1530,7 @@ def _parse_and_execute(text: str, original: str = "") -> str:
                     {"text": "✅ Yes, undo sell", "callback_data": f"confirm_reopen|{ticker}"},
                     {"text": "❌ No, keep it",    "callback_data": "cancel_abort"},
                 ]],
-                chat_id=_chat_id(),
+                chat_id=chat_id,
             )
             return ""
 

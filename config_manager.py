@@ -29,10 +29,11 @@ DEFAULT_CONFIG = {
     "watchlist": [],                   # e.g. ["NVDA", "TSLA", "BRK-B"] — always evaluated
 }
 
-GIST_FILENAME         = "config.json"
-PICKS_FILENAME        = "picks.json"          # Stores morning picks for 10:30 AM confirmation
-WEEKLY_PICKS_FILENAME = "weekly_picks.json"   # Accumulates Mon–Fri picks for Saturday recap
-TRADE_LOG_FILENAME    = "trade_log.json"      # Persistent trade log for performance tracking
+GIST_FILENAME          = "config.json"
+PICKS_FILENAME         = "picks.json"           # Stores morning picks for 10:30 AM confirmation
+WEEKLY_PICKS_FILENAME  = "weekly_picks.json"    # Accumulates Mon–Fri picks for Saturday recap
+TRADE_LOG_FILENAME     = "trade_log.json"       # Persistent trade log for performance tracking
+PENDING_STATE_FILENAME = "pending_state.json"   # Conversation state for multi-step commands
 
 
 def _gist_headers() -> dict:
@@ -244,6 +245,49 @@ def _write_gist_file(filename: str, data: dict) -> None:
     payload = {"files": {filename: {"content": json.dumps(data, indent=2)}}}
     resp    = requests.patch(url, headers=_gist_headers(), json=payload, timeout=10)
     resp.raise_for_status()
+
+
+# ── Pending conversation state (multi-step commands) ─────────────────────────
+
+def load_pending_state(chat_id: str) -> dict | None:
+    """
+    Load pending conversation state for a chat_id.
+    Returns None if not found or expired (60-second TTL).
+    """
+    from datetime import datetime
+    data  = _load_gist_file(PENDING_STATE_FILENAME) or {}
+    state = data.get(str(chat_id))
+    if not state:
+        return None
+    try:
+        if datetime.utcnow() > datetime.fromisoformat(state["expires_at"]):
+            clear_pending_state(chat_id)
+            return None
+    except Exception:
+        return None
+    return state
+
+
+def save_pending_state(chat_id: str, command: str,
+                       step: int = 1, data: dict | None = None) -> None:
+    """Save pending state for a chat_id with a 60-second expiry."""
+    from datetime import datetime, timedelta
+    all_states = _load_gist_file(PENDING_STATE_FILENAME) or {}
+    all_states[str(chat_id)] = {
+        "command":    command,
+        "step":       step,
+        "data":       data or {},
+        "expires_at": (datetime.utcnow() + timedelta(seconds=60)).isoformat(),
+    }
+    _write_gist_file(PENDING_STATE_FILENAME, all_states)
+
+
+def clear_pending_state(chat_id: str) -> None:
+    """Remove pending state for a chat_id."""
+    all_states = _load_gist_file(PENDING_STATE_FILENAME) or {}
+    if str(chat_id) in all_states:
+        del all_states[str(chat_id)]
+        _write_gist_file(PENDING_STATE_FILENAME, all_states)
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────
