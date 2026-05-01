@@ -307,10 +307,10 @@ def format_daily_message(picks: dict, config: dict) -> str:
     if sector_line:
         lines.append(sector_line)
 
-    # Commands — all plain blue links; parameterized commands prompt for input on tap
+    # Commands — always visible, no expandable wrapper so taps don't fight with collapse
     lines += [
         "",
-        "<blockquote expandable>📋 <b>COMMANDS</b>\n"
+        "📋 <b>COMMANDS</b>\n"
         "\n<b>Daily</b>\n"
         "/today  /prices  /perf  /portfolio  /explain\n"
         "\n<b>My Trades</b>\n"
@@ -320,8 +320,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         "\n<b>Risk &amp; Budgets</b>\n"
         "/set_risk  /set_st  /set_lt  /set_cst  /set_clt\n"
         "\n<b>Control</b>\n"
-        "/status  /pause  /resume  /reset  /help"
-        "</blockquote>",
+        "/status  /pause  /resume  /reset  /help",
     ]
     return "\n".join(lines)
 
