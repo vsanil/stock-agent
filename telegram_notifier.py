@@ -305,29 +305,29 @@ def format_daily_message(picks: dict, config: dict) -> str:
         lines.append(sector_line)
 
     # Commands — blockquote expandable
-    # <code> block = tap to copy just the command; example shown in plain text after
+    # Plain /command text so Telegram auto-renders as blue tappable links
+    # Param examples in <i>italic</i> — visible but not a tappable/copyable element
     lines += [
         "",
         "<blockquote expandable>📋 <b>COMMANDS</b>\n"
         "\n<b>Daily</b>\n"
         "/today  /prices  /perf  /portfolio\n"
-        "<code>/explain </code><i>apple  ·  why is NVDA picked?</i>\n"
+        "/explain <i>apple  ·  why is NVDA picked?</i>\n"
         "\n<b>My Trades</b>\n"
-        "<code>/bought </code><i>apple  ·  AAPL 182.50  ·  AAPL 182.50 5</i>\n"
-        "<code>/sold </code><i>apple  ·  AAPL 197.10</i>\n"
-        "<code>/cancel </code><i>apple</i>\n"
+        "/bought <i>apple  ·  AAPL 182.50  ·  AAPL 182.50 5</i>\n"
+        "/sold <i>apple  ·  AAPL 197.10</i>\n"
+        "/cancel <i>apple</i>\n"
         "\n<b>Watchlist &amp; Filters</b>\n"
-        "<code>/watch </code><i>NVDA TSLA  ·  nvidia tesla</i>\n"
-        "<code>/watch </code><i>none  — clear watchlist</i>\n"
-        "<code>/exclude </code><i>energy  ·  oil stocks</i>\n"
-        "<code>/exclude </code><i>none  — clear exclusions</i>\n"
+        "/watch <i>NVDA TSLA  ·  nvidia tesla</i>\n"
+        "/watch <i>none  — clear watchlist</i>\n"
+        "/exclude <i>energy  ·  oil stocks</i>\n"
+        "/exclude <i>none  — clear exclusions</i>\n"
         "/watchlist\n"
         "\n<b>Risk &amp; Budgets</b>\n"
-        "<code>/set_risk </code><i>conservative · moderate · aggressive</i>\n"
-        "<code>/set_st </code><i>30</i>   <code>/set_lt </code><i>50</i>   <code>/set_cst </code><i>20</i>   <code>/set_clt </code><i>30</i>\n"
+        "/set_risk <i>conservative · moderate · aggressive</i>\n"
+        "/set_st <i>30</i>   /set_lt <i>50</i>   /set_cst <i>20</i>   /set_clt <i>30</i>\n"
         "\n<b>Control</b>\n"
-        "/status  /pause  /resume  /reset  /help\n"
-        "\n<i>Tap any </i><code>command </code><i>to copy it, then add your value and send</i>"
+        "/status  /pause  /resume  /reset  /help"
         "</blockquote>",
     ]
     return "\n".join(lines)
