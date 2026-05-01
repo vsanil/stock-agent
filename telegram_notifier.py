@@ -46,8 +46,23 @@ def send_message(text: str, chat_id: str | None = None) -> bool:
     chat_id = chat_id or _chat_id()
     url     = TELEGRAM_API.format(token=token, method="sendMessage")
 
-    # Split long messages
-    chunks = [text[i:i + MAX_MESSAGE_LENGTH] for i in range(0, len(text), MAX_MESSAGE_LENGTH)]
+    # Split long messages — always break at newlines to avoid splitting inside HTML tags
+    def _safe_split(txt: str, limit: int) -> list[str]:
+        if len(txt) <= limit:
+            return [txt]
+        parts = []
+        while txt:
+            if len(txt) <= limit:
+                parts.append(txt)
+                break
+            split_at = txt.rfind("\n", 0, limit)
+            if split_at == -1:
+                split_at = limit        # no newline found — hard cut as last resort
+            parts.append(txt[:split_at])
+            txt = txt[split_at:].lstrip("\n")
+        return parts
+
+    chunks = _safe_split(text, MAX_MESSAGE_LENGTH)
 
     for chunk in chunks:
         payload = {
@@ -194,99 +209,88 @@ def format_daily_message(picks: dict, config: dict) -> str:
     if macro_line:
         lines.append(macro_line)
 
-    # ── Short-term stocks ────────────────────────────────────────────────────
+    def _pick_row_st(i, s):
+        entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
+        earnings_tag = f"  🗓 {_esc(s['earnings_date'])}" if s.get("earnings_date") else ""
+        alloc = s.get("allocation")
+        alloc_str = f"  <code>${_p(alloc)}</code>" if alloc is not None else ""
+        return (
+            f"<b>{_esc(s.get('ticker'))}</b>  {_stars(s.get('conviction', 3))}  "
+            f"<i>{_esc(_short_company(s.get('company', '')))}</i>{earnings_tag}\n"
+            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
+            f"<i>{_upside(entry, target)}</i>  ·  stop <code>${_p(stop)}</code>{alloc_str}\n"
+            f"<i>{_esc(s.get('thesis'))}</i>"
+        )
+
+    def _pick_row_lt(i, s):
+        entry, target = s.get("entry_price"), s.get("target_price")
+        alloc = s.get("allocation")
+        alloc_str = f"  <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
+        return (
+            f"<b>{_esc(s.get('ticker'))}</b>  {_stars(s.get('conviction', 3))}  "
+            f"<i>{_esc(_short_company(s.get('company', '')))}</i>\n"
+            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
+            f"<i>{_upside(entry, target)}</i>  ·  {_esc(s.get('horizon'))}{alloc_str}\n"
+            f"<i>{_esc(s.get('thesis'))}</i>"
+        )
+
+    def _pick_row_cst(i, c):
+        entry, target, stop = c.get("entry_price"), c.get("target_price"), c.get("stop_loss")
+        alloc = c.get("allocation")
+        alloc_str = f"  <code>${_p(alloc)}</code>" if alloc is not None else ""
+        return (
+            f"<b>{_esc(c.get('symbol'))}</b>  {_stars(c.get('conviction', 3))}  "
+            f"<i>{_esc(_short_company(c.get('name', '')))}</i>\n"
+            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
+            f"<i>{_upside(entry, target)}</i>  ·  stop <code>${_p(stop)}</code>{alloc_str}\n"
+            f"<i>{_esc(c.get('thesis'))}</i>"
+        )
+
+    def _pick_row_clt(i, c):
+        entry, target = c.get("entry_price"), c.get("target_price")
+        alloc = c.get("allocation")
+        alloc_str = f"  <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
+        return (
+            f"<b>{_esc(c.get('symbol'))}</b>  {_stars(c.get('conviction', 3))}  "
+            f"<i>{_esc(_short_company(c.get('name', '')))}</i>\n"
+            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
+            f"<i>{_upside(entry, target)}</i>  ·  {_esc(c.get('horizon'))}{alloc_str}\n"
+            f"<i>{_esc(c.get('thesis'))}</i>"
+        )
+
+    # ── Short-term stocks — green tinted blockquote ───────────────────────────
     if st_picks:
-        st_body = []
-        for i, s in enumerate(st_picks, 1):
-            entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
-            earnings_tag = f"  🗓️ Earnings {_esc(s['earnings_date'])}" if s.get("earnings_date") else ""
-            alloc = s.get("allocation")
-            alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
-            st_body += [
-                f"{i}. <b>{_esc(s.get('ticker'))}</b> · {_esc(_short_company(s.get('company', '')))}  {_stars(s.get('conviction', 3))}{earnings_tag}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
-                f"   {_esc(s.get('thesis'))}",
-            ]
+        body = "\n\n".join(_pick_row_st(i, s) for i, s in enumerate(st_picks, 1))
         lines += [
             "",
-            "▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸▸",
-            f"📈 <b>Short Term Stocks</b>  <code>${short_budget}/trade</code>",
-            "<tg-spoiler>" + "\n".join(st_body) + "</tg-spoiler>",
+            f"<blockquote expandable>📈 <b>SHORT TERM</b>  <code>${short_budget} / trade</code>\n\n{body}</blockquote>",
         ]
 
-    # ── Long-term stocks ─────────────────────────────────────────────────────
+    # ── Long-term stocks — blue tinted blockquote ─────────────────────────────
     if lt_picks:
-        lt_body = []
-        for i, s in enumerate(lt_picks, 1):
-            entry, target = s.get("entry_price"), s.get("target_price")
-            alloc = s.get("allocation")
-            alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
-            lt_body += [
-                f"{i}. <b>{_esc(s.get('ticker'))}</b> · {_esc(_short_company(s.get('company', '')))}  {_stars(s.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {_esc(s.get('horizon'))}{alloc_str}",
-                f"   {_esc(s.get('thesis'))}",
-            ]
+        body = "\n\n".join(_pick_row_lt(i, s) for i, s in enumerate(lt_picks, 1))
         lines += [
             "",
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"🏦 <b>Long Term Stocks</b>  <code>${long_budget}/mo DCA</code>",
-            "<tg-spoiler>" + "\n".join(lt_body) + "</tg-spoiler>",
+            f"<blockquote expandable>🏦 <b>LONG TERM</b>  <code>${long_budget} / mo DCA</code>\n\n{body}</blockquote>",
         ]
 
-    # ── Crypto short-term ────────────────────────────────────────────────────
+    # ── Crypto short-term — orange tinted blockquote ──────────────────────────
     if cst_picks:
-        cst_body = []
-        for i, c in enumerate(cst_picks, 1):
-            entry, target, stop = c.get("entry_price"), c.get("target_price"), c.get("stop_loss")
-            alloc = c.get("allocation")
-            alloc_str = f"  · invest <code>${_p(alloc)}</code>" if alloc is not None else ""
-            cst_body += [
-                f"{i}. <b>{_esc(c.get('symbol'))}</b> · {_esc(_short_company(c.get('name', '')))}  {_stars(c.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  stop <code>${_p(stop)}</code>{alloc_str}",
-                f"   {_esc(c.get('thesis'))}",
-            ]
+        body = "\n\n".join(_pick_row_cst(i, c) for i, c in enumerate(cst_picks, 1))
         lines += [
             "",
-            "┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈ ┈",
-            f"🪙 <b>Crypto Short Term</b>  <code>${crypto_st_budget}/trade</code>  ⚡ HIGH RISK",
-            "<tg-spoiler>" + "\n".join(cst_body) + "</tg-spoiler>",
+            f"<blockquote expandable>🪙 <b>CRYPTO ST</b>  <code>${crypto_st_budget} / trade</code>  ⚡ HIGH RISK\n\n{body}</blockquote>",
         ]
 
-    # ── Crypto long-term ─────────────────────────────────────────────────────
+    # ── Crypto long-term — purple tinted blockquote ───────────────────────────
     if clt_picks:
-        clt_body = []
-        for i, c in enumerate(clt_picks, 1):
-            entry, target = c.get("entry_price"), c.get("target_price")
-            alloc = c.get("allocation")
-            alloc_str = f"  · DCA <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
-            clt_body += [
-                f"{i}. <b>{_esc(c.get('symbol'))}</b> · {_esc(_short_company(c.get('name', '')))}  {_stars(c.get('conviction', 3))}",
-                f"   <code>${_p(entry)}</code> → <code>${_p(target)}</code> <i>({_upside(entry, target)})</i>  · {_esc(c.get('horizon'))}{alloc_str}",
-                f"   {_esc(c.get('thesis'))}",
-            ]
+        body = "\n\n".join(_pick_row_clt(i, c) for i, c in enumerate(clt_picks, 1))
         lines += [
             "",
-            "◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆ ◆",
-            f"💎 <b>Crypto Long Term</b>  <code>${crypto_lt_budget}/mo DCA</code>",
-            "<tg-spoiler>" + "\n".join(clt_body) + "</tg-spoiler>",
+            f"<blockquote expandable>💎 <b>CRYPTO LT</b>  <code>${crypto_lt_budget} / mo DCA</code>\n\n{body}</blockquote>",
         ]
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    has_crypto_picks = bool(cst_picks or clt_picks)
-    if has_crypto_picks:
-        budget_line = (f"💰 <b>Budgets:</b> ST <code>${short_budget}/trade</code> · "
-                       f"LT <code>${long_budget}/mo DCA</code> · "
-                       f"CST <code>${crypto_st_budget}/trade</code> · "
-                       f"CLT <code>${crypto_lt_budget}/mo DCA</code>")
-        adjust_line = (f"<i>To adjust: /set_st {short_budget} · /set_lt {long_budget} · "
-                       f"/set_cst {crypto_st_budget} · /set_clt {crypto_lt_budget}</i>")
-    else:
-        budget_line = (f"💰 <b>Budgets:</b> ST <code>${short_budget}/trade</code> · "
-                       f"LT <code>${long_budget}/mo DCA</code>")
-        adjust_line = (f"<i>To adjust: /set_st {short_budget} · /set_lt {long_budget} "
-                       f"— replace with your amount (e.g. /set_st 50)</i>")
-
-    # ── Sector rotation insight ───────────────────────────────────────────────
     seen_sectors: set = set()
     sector_list: list = []
     for p in st_picks + lt_picks:
@@ -294,46 +298,37 @@ def format_daily_message(picks: dict, config: dict) -> str:
         if s and s != "Unknown" and s not in seen_sectors:
             sector_list.append(s)
             seen_sectors.add(s)
-    sector_line = f"🏭 <b>Sectors today:</b> {_esc(', '.join(sector_list))}" if sector_list else ""
+    sector_line = f"🏭 <i>Sectors: {_esc(', '.join(sector_list))}</i>" if sector_list else ""
 
-    lines += [
-        "",
-        budget_line,
-        adjust_line,
-    ]
+    lines += ["", "⚠️ <i>Not financial advice.</i>"]
     if sector_line:
         lines.append(sector_line)
+
+    # Commands — blockquote expandable
+    # <code> block = tap to copy just the command; example shown in plain text after
     lines += [
         "",
-        "⚠️ <i>Not financial advice.</i>",
-        "",
-        "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄",
-        "📋 <b>Commands</b>  <i>(tap to expand)</i>",
-        "<tg-spoiler>"
-        "── Daily ──\n"
-        "/today  /prices  /perf\n"
-        "<code>/explain why is nvidia picked</code>\n"
-        "\n── My Trades ──\n"
-        "<code>/bought AAPL 182.50</code>  — log a buy\n"
-        "<code>/bought AAPL 182.50 5</code>  — with shares\n"
-        "<code>/sold AAPL 197.10</code>  — log a sell\n"
-        "/positions  — live P&amp;L on open trades\n"
-        "<code>/cancel apple</code>  — undo accidental buy or sell\n"
-        "\n── Watchlist &amp; Filters ──\n"
-        "<code>/watch tesla nvidia</code>  — always evaluate these\n"
-        "/watch none  — clear watchlist\n"
-        "<code>/exclude energy utilities</code>  — skip sectors\n"
-        "/exclude none  — clear exclusions\n"
-        "/watchlist  — show AI settings\n"
-        "\n── Risk &amp; Budgets ──\n"
-        "<code>/set_risk conservative</code>  or  <code>aggressive</code>\n"
-        "<code>/set_st 50</code>  <code>/set_lt 100</code>\n"
-        "<code>/set_cst 30</code>  <code>/set_clt 50</code>\n"
-        "\n── Control ──\n"
+        "<blockquote expandable>📋 <b>COMMANDS</b>\n"
+        "\n<b>Daily</b>\n"
+        "/today  /prices  /perf  /portfolio\n"
+        "<code>/explain </code><i>apple  ·  why is NVDA picked?</i>\n"
+        "\n<b>My Trades</b>\n"
+        "<code>/bought </code><i>apple  ·  AAPL 182.50  ·  AAPL 182.50 5</i>\n"
+        "<code>/sold </code><i>apple  ·  AAPL 197.10</i>\n"
+        "<code>/cancel </code><i>apple</i>\n"
+        "\n<b>Watchlist &amp; Filters</b>\n"
+        "<code>/watch </code><i>NVDA TSLA  ·  nvidia tesla</i>\n"
+        "<code>/watch </code><i>none  — clear watchlist</i>\n"
+        "<code>/exclude </code><i>energy  ·  oil stocks</i>\n"
+        "<code>/exclude </code><i>none  — clear exclusions</i>\n"
+        "/watchlist\n"
+        "\n<b>Risk &amp; Budgets</b>\n"
+        "<code>/set_risk </code><i>conservative · moderate · aggressive</i>\n"
+        "<code>/set_st </code><i>30</i>   <code>/set_lt </code><i>50</i>   <code>/set_cst </code><i>20</i>   <code>/set_clt </code><i>30</i>\n"
+        "\n<b>Control</b>\n"
         "/status  /pause  /resume  /reset  /help\n"
-        "\n<i>💡 Tap <code>code blocks</code> to copy, then paste &amp; edit before sending</i>"
-        "</tg-spoiler>",
-        "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄",
+        "\n<i>Tap any </i><code>command </code><i>to copy it, then add your value and send</i>"
+        "</blockquote>",
     ]
     return "\n".join(lines)
 
