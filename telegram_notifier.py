@@ -1351,8 +1351,12 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     # ── Backtest ──────────────────────────────────────────────────────────────
     if text == "BACKTEST":
-        send_message("⏳ Running backtest over the last 6 months… results in ~2 min.",
-                     chat_id=chat_id)
+        send_message(
+            "⏳ <b>Backtest running…</b>\n\n"
+            "Scoring ~600 tickers across 26 weekly intervals (1-year history).\n"
+            "Results will arrive in this chat in <b>1–3 minutes</b> — no need to wait here.",
+            chat_id=chat_id,
+        )
 
         def _run_and_send():
             try:

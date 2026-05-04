@@ -2,11 +2,13 @@
 backtester.py — Simple historical backtest of the screener strategy.
 
 Approach:
-  1. Pull 9 months of daily OHLCV for the current universe
-  2. At each weekly interval (6 months ago → 3 months ago) apply the same
-     technical scoring used in screener.py
+  1. Pull 1 year of daily OHLCV for the same universe the screener evaluates
+  2. At each of 26 weekly intervals apply the same technical scoring as screener.py
   3. For each simulated pick, measure the forward 21-day (1 month) return
   4. Compute win rate, avg return, Sharpe-style ratio vs SPY benchmark
+
+Uses the same ticker universe as screener.py (600 tickers via get_stock_universe()).
+26 weekly intervals gives statistically meaningful results (~130 simulated picks).
 
 This is a replay backtest, not a walk-forward. It illustrates strategy
 quality without claiming production accuracy.
@@ -22,20 +24,15 @@ import yfinance as yf
 import pandas as pd
 import ta
 
+from screener import get_stock_universe
+
 warnings.filterwarnings("ignore")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-BACKTEST_UNIVERSE   = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "JPM",
-    "V", "UNH", "XOM", "MA", "PG", "JNJ", "COST", "HD", "MRK", "ABBV",
-    "CVX", "CRM", "BAC", "NFLX", "AMD", "KO", "WMT", "PEP", "TMO", "ACN",
-    "MCD", "CSCO", "ABT", "ADBE", "TXN", "DIS", "WFC", "NEE", "PM", "RTX",
-    "INTU", "AMGN", "MS", "SPGI", "GS", "LOW", "HON", "ISRG", "CAT", "NOW",
-]
-LOOKBACK_DAYS       = 270   # 9 months of data
+LOOKBACK_DAYS       = 365   # 1 year of data — supports 26 weekly intervals
 FORWARD_HOLD_DAYS   = 21    # 1-month forward return window
 PICKS_PER_PERIOD    = 5     # simulate picking top 5 per period
-PERIODS             = 6     # number of weekly periods to test
+PERIODS             = 26    # ~26 weekly intervals over the year (more robust statistics)
 
 
 def _st_score(close: pd.Series, volume: pd.Series) -> int:
@@ -81,6 +78,7 @@ def run_backtest(universe: list[str] | None = None) -> dict:
 
     Returns:
         {
+            "universe_size":   int,
             "periods_tested":  int,
             "total_picks":     int,
             "win_rate":        float,     # %
@@ -93,7 +91,12 @@ def run_backtest(universe: list[str] | None = None) -> dict:
             "note":            str,
         }
     """
-    tickers = universe or BACKTEST_UNIVERSE
+    if universe:
+        tickers = universe
+    else:
+        print("[backtester] Building ticker universe from screener...")
+        tickers = get_stock_universe()
+
     print(f"[backtester] Downloading {len(tickers)} tickers + SPY ({LOOKBACK_DAYS} days)...")
 
     try:
@@ -185,6 +188,7 @@ def run_backtest(universe: list[str] | None = None) -> dict:
     worst = min(all_trades, key=lambda t: t["return"])
 
     return {
+        "universe_size":  len(tickers),
         "periods_tested": len(test_indices),
         "total_picks":    len(all_trades),
         "win_rate":       round(win_rate, 1),
@@ -194,7 +198,7 @@ def run_backtest(universe: list[str] | None = None) -> dict:
         "sharpe_approx":  sharpe,
         "best_trade":     (best["ticker"], best["return"]),
         "worst_trade":    (worst["ticker"], worst["return"]),
-        "note":           f"Backtest: {LOOKBACK_DAYS}d history, {FORWARD_HOLD_DAYS}d hold, {PERIODS} periods",
+        "note":           f"Backtest: {LOOKBACK_DAYS}d history, {FORWARD_HOLD_DAYS}d hold, {len(test_indices)} periods",
     }
 
 
@@ -209,8 +213,8 @@ def format_backtest_message(result: dict) -> str:
 
     return (
         f"📊 <b>STRATEGY BACKTEST</b>\n\n"
-        f"<b>Universe:</b> {len(BACKTEST_UNIVERSE)} tickers\n"
-        f"<b>Periods tested:</b> {result['periods_tested']} ({result['total_picks']} simulated picks)\n\n"
+        f"<b>Universe:</b> {result.get('universe_size', '—')} tickers  |  1-year history\n"
+        f"<b>Periods tested:</b> {result['periods_tested']} weekly intervals ({result['total_picks']} simulated picks)\n\n"
         f"<b>Win rate:</b>  <b>{result['win_rate']}%</b>  {'✅' if result['win_rate'] >= 55 else '⚠️'}\n"
         f"<b>Avg return:</b> <b>{result['avg_return']:+.2f}%</b> (21-day hold)\n"
         f"<b>SPY benchmark:</b> {result['avg_spy_return']:+.2f}%\n"
