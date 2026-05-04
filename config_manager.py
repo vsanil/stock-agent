@@ -34,6 +34,9 @@ PICKS_FILENAME         = "picks.json"           # Stores morning picks for 10:30
 WEEKLY_PICKS_FILENAME  = "weekly_picks.json"    # Accumulates Mon–Fri picks for Saturday recap
 TRADE_LOG_FILENAME     = "trade_log.json"       # Persistent trade log for performance tracking
 PENDING_STATE_FILENAME = "pending_state.json"   # Conversation state for multi-step commands
+PAPER_PORTFOLIO_FILE   = "paper_portfolio.json" # Paper trading portfolio (simulated trades)
+PRICE_ALERTS_FILE      = "price_alerts.json"    # User price alerts
+SIGNAL_CACHE_FILE      = "signal_cache.json"    # Cached sentiment + insider signals (5-day TTL)
 
 
 def _gist_headers() -> dict:
@@ -214,6 +217,60 @@ def save_trade_log(log: dict) -> None:
     _write_gist_file(TRADE_LOG_FILENAME, log)
     print(f"[config_manager] Trade log saved "
           f"({len(log['open'])} open, {len(log['closed'])} closed).")
+
+
+# ── Signal cache (sentiment + insider, 5-day TTL) ────────────────────────────
+
+SIGNAL_CACHE_TTL_DAYS = 5
+
+
+def load_signal_cache() -> dict:
+    """
+    Load the signal cache from Gist.
+    Cache structure: { ticker: { "sentiment": {...}, "insider": {...}, "cached_date": "YYYY-MM-DD" } }
+    Returns {} if missing.
+    """
+    return _load_gist_file(SIGNAL_CACHE_FILE) or {}
+
+
+def save_signal_cache(cache: dict) -> None:
+    """Write signal cache to Gist."""
+    _write_gist_file(SIGNAL_CACHE_FILE, cache)
+    print(f"[config_manager] Signal cache saved ({len(cache)} ticker(s)).")
+
+
+def get_cached_signal(cache: dict, ticker: str) -> dict | None:
+    """
+    Return cached signals for a ticker if still within TTL, else None.
+    Caller is responsible for providing the loaded cache dict to avoid
+    repeated Gist fetches.
+    """
+    from datetime import date
+    entry = cache.get(ticker)
+    if not entry:
+        return None
+    try:
+        cached_date = date.fromisoformat(entry.get("cached_date", ""))
+        age_days    = (date.today() - cached_date).days
+        if age_days <= SIGNAL_CACHE_TTL_DAYS:
+            return entry
+    except Exception:
+        pass
+    return None
+
+
+def set_cached_signal(cache: dict, ticker: str, sentiment: dict | None,
+                      insider: dict | None) -> None:
+    """
+    Upsert a ticker's signals in the cache dict (in-place).
+    Call save_signal_cache(cache) after processing all tickers.
+    """
+    from datetime import date
+    cache[ticker] = {
+        "sentiment":   sentiment,
+        "insider":     insider,
+        "cached_date": date.today().isoformat(),
+    }
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

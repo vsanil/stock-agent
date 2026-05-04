@@ -20,7 +20,8 @@ from datetime import datetime, date, timedelta
 import pytz
 
 from config_manager import get_config, save_picks, load_picks, save_weekly_pick, get_dynamic_pick_counts, load_trade_log
-from trade_logger import open_trades, check_and_close_trades
+from trade_logger import open_trades, check_and_close_trades, update_trailing_stops
+from price_alert_manager import check_all_alerts
 from screener import run_screener
 from crypto_screener import run_crypto_screener
 from ai_analyzer import analyze_with_claude
@@ -328,6 +329,21 @@ def run_confirmation():
         _alert("⚠ Could not fetch prices for 10:30 AM check.")
         return
 
+    # ── Trailing stop updates ─────────────────────────────────────────────────
+    try:
+        trail_closed = update_trailing_stops(current_prices)
+        for trade in trail_closed:
+            sign = "+" if trade["return_pct"] >= 0 else ""
+            _alert(
+                f"🔒 <b>{trade['ticker']} TRAILING STOP HIT</b>\n"
+                f"Sold @ <code>${trade['closed_price']}</code>  "
+                f"<b>{sign}{trade['return_pct']:.1f}%</b>  (${trade['gain_usd']:+.2f})\n"
+                f"<i>Peak ${trade.get('highest_reached', '?')} → "
+                f"Trail stop ${trade.get('trailing_stop_level', '?')}</i>"
+            )
+    except Exception as exc:
+        print(f"[agent] Trailing stop update failed (non-critical): {exc}")
+
     # Check and close trades that hit target or stop
     try:
         closed = check_and_close_trades(current_prices)
@@ -340,6 +356,14 @@ def run_confirmation():
                    f"(${trade['gain_usd']:+.2f})")
     except Exception as exc:
         print(f"[agent] Trade close check failed (non-critical): {exc}")
+
+    # ── Price alerts ──────────────────────────────────────────────────────────
+    try:
+        fired = check_all_alerts(send_fn=_alert)
+        if fired:
+            print(f"[agent] {fired} price alert(s) triggered.")
+    except Exception as exc:
+        print(f"[agent] Price alert check failed (non-critical): {exc}")
 
     # ── Earnings warning for open stock positions ─────────────────────────────
     try:
@@ -425,6 +449,20 @@ def run_close_check():
         return
 
     try:
+        trail_closed = update_trailing_stops(current_prices)
+        for trade in trail_closed:
+            sign = "+" if trade["return_pct"] >= 0 else ""
+            _alert(
+                f"🔒 <b>{trade['ticker']} TRAILING STOP HIT</b>\n"
+                f"Sold @ <code>${trade['closed_price']}</code>  "
+                f"<b>{sign}{trade['return_pct']:.1f}%</b>  (${trade['gain_usd']:+.2f})\n"
+                f"<i>Peak ${trade.get('highest_reached', '?')} → "
+                f"Trail stop ${trade.get('trailing_stop_level', '?')}</i>"
+            )
+    except Exception as exc:
+        print(f"[agent] Trailing stop update failed (non-critical): {exc}")
+
+    try:
         closed = check_and_close_trades(current_prices)
         if closed:
             for trade in closed:
@@ -438,6 +476,14 @@ def run_close_check():
             print("[agent] 3:30 PM close check: no trades hit. No message sent.")
     except Exception as exc:
         print(f"[agent] Trade close check failed (non-critical): {exc}")
+
+    # ── Price alerts ──────────────────────────────────────────────────────────
+    try:
+        fired = check_all_alerts(send_fn=_alert)
+        if fired:
+            print(f"[agent] {fired} price alert(s) triggered.")
+    except Exception as exc:
+        print(f"[agent] Price alert check failed (non-critical): {exc}")
 
     # ── End-of-day portfolio summary for manually logged positions ────────────
     try:

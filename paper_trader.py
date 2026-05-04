@@ -1,0 +1,239 @@
+"""
+paper_trader.py — Simulated paper trading portfolio stored in GitHub Gist.
+
+Paper trades let you test the bot's picks without risking real money.
+All commands mirror the real /bought /sold /portfolio flow but work on
+a separate paper_portfolio.json file.
+
+Telegram commands:
+  /paper_buy AAPL 10        → simulate buying 10 shares of AAPL at live price
+  /paper_buy AAPL 182.50 10 → simulate buying 10 shares at $182.50
+  /paper_sell AAPL          → simulate selling entire AAPL position at live price
+  /paper_portfolio          → show current paper portfolio + unrealized P&L
+  /paper_perf               → show paper trading win rate, total return
+  /paper_reset              → wipe paper portfolio (start over)
+"""
+
+from datetime import date
+import yfinance as yf
+from config_manager import _load_gist_file, _write_gist_file
+
+PAPER_FILE = "paper_portfolio.json"
+
+
+# ── Internal helpers ───────────────────────────────────────────────────────────
+
+def _load() -> dict:
+    data = _load_gist_file(PAPER_FILE) or {}
+    data.setdefault("positions", [])    # open positions
+    data.setdefault("history",   [])    # closed trades
+    data.setdefault("starting_cash", 10_000.0)
+    data.setdefault("cash",          data["starting_cash"])
+    return data
+
+
+def _save(data: dict) -> None:
+    _write_gist_file(PAPER_FILE, data)
+
+
+def _live_price(ticker: str) -> float | None:
+    try:
+        return float(yf.Ticker(ticker).fast_info.last_price)
+    except Exception:
+        return None
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+def paper_buy(ticker: str, shares: float, price: float | None = None) -> str:
+    """Simulate buying shares. Returns Telegram-formatted confirmation."""
+    ticker = ticker.upper()
+    live   = _live_price(ticker)
+    if live is None:
+        return f"❌ Could not fetch price for <b>{ticker}</b>."
+
+    buy_price = price if price else live
+    cost      = round(buy_price * shares, 2)
+
+    data = _load()
+    if cost > data["cash"]:
+        return (f"❌ Insufficient paper cash.\n"
+                f"Need ${cost:,.2f}, have ${data['cash']:,.2f}")
+
+    # Check if already holding this ticker
+    existing = next((p for p in data["positions"] if p["ticker"] == ticker), None)
+    if existing:
+        # Average down/up
+        total_shares = existing["shares"] + shares
+        avg_price    = (existing["avg_price"] * existing["shares"] + buy_price * shares) / total_shares
+        existing["shares"]    = round(total_shares, 4)
+        existing["avg_price"] = round(avg_price, 2)
+        existing["cost_basis"] = round(avg_price * total_shares, 2)
+    else:
+        data["positions"].append({
+            "ticker":      ticker,
+            "shares":      round(shares, 4),
+            "avg_price":   round(buy_price, 2),
+            "cost_basis":  cost,
+            "bought_date": date.today().isoformat(),
+        })
+
+    data["cash"] = round(data["cash"] - cost, 2)
+    _save(data)
+
+    return (
+        f"📄 <b>Paper Buy</b>\n"
+        f"<b>{ticker}</b> × {shares} shares @ ${buy_price:,.2f}\n"
+        f"Cost: <b>${cost:,.2f}</b>\n"
+        f"Remaining cash: ${data['cash']:,.2f}"
+    )
+
+
+def paper_sell(ticker: str, shares: float | None = None, price: float | None = None) -> str:
+    """Simulate selling. If shares=None, sells entire position."""
+    ticker = ticker.upper()
+    live   = _live_price(ticker)
+    if live is None:
+        return f"❌ Could not fetch price for <b>{ticker}</b>."
+
+    sell_price = price if price else live
+    data       = _load()
+    position   = next((p for p in data["positions"] if p["ticker"] == ticker), None)
+
+    if not position:
+        return f"❌ No open paper position for <b>{ticker}</b>."
+
+    sell_shares = shares if shares else position["shares"]
+    if sell_shares > position["shares"]:
+        sell_shares = position["shares"]
+
+    proceeds   = round(sell_price * sell_shares, 2)
+    cost       = round(position["avg_price"] * sell_shares, 2)
+    gain       = round(proceeds - cost, 2)
+    gain_pct   = round(gain / cost * 100, 2) if cost > 0 else 0
+
+    # Record in history
+    data["history"].append({
+        "ticker":      ticker,
+        "shares":      sell_shares,
+        "buy_price":   position["avg_price"],
+        "sell_price":  round(sell_price, 2),
+        "gain":        gain,
+        "gain_pct":    gain_pct,
+        "closed_date": date.today().isoformat(),
+    })
+
+    # Update position
+    remaining = round(position["shares"] - sell_shares, 4)
+    if remaining <= 0.001:
+        data["positions"] = [p for p in data["positions"] if p["ticker"] != ticker]
+    else:
+        position["shares"]    = remaining
+        position["cost_basis"] = round(position["avg_price"] * remaining, 2)
+
+    data["cash"] = round(data["cash"] + proceeds, 2)
+    _save(data)
+
+    emoji = "✅" if gain >= 0 else "❌"
+    return (
+        f"📄 <b>Paper Sell</b>\n"
+        f"<b>{ticker}</b> × {sell_shares} shares @ ${sell_price:,.2f}\n"
+        f"Proceeds: ${proceeds:,.2f} | {emoji} <b>{gain_pct:+.1f}%</b> (${gain:+.2f})\n"
+        f"Cash: ${data['cash']:,.2f}"
+    )
+
+
+def paper_portfolio() -> str:
+    """Show current paper portfolio with unrealized P&L."""
+    data      = _load()
+    positions = data["positions"]
+
+    if not positions:
+        return (
+            "📄 <b>Paper Portfolio</b>\n\n"
+            "No open positions.\n"
+            f"Available cash: <b>${data['cash']:,.2f}</b>\n\n"
+            "Use /paper_buy to simulate a trade."
+        )
+
+    lines      = [f"📄 <b>PAPER PORTFOLIO</b>\n"]
+    total_val  = 0.0
+    total_cost = 0.0
+
+    for p in positions:
+        live = _live_price(p["ticker"])
+        if live is None:
+            live = p["avg_price"]
+        val      = live * p["shares"]
+        cost     = p["avg_price"] * p["shares"]
+        unrealzd = val - cost
+        pct      = unrealzd / cost * 100 if cost > 0 else 0
+        emoji    = "📈" if unrealzd >= 0 else "📉"
+        total_val  += val
+        total_cost += cost
+
+        lines.append(
+            f"{emoji} <b>{p['ticker']}</b> × {p['shares']} "
+            f"@ ${p['avg_price']:,.2f} → <b>${live:,.2f}</b>  "
+            f"<b>{pct:+.1f}%</b> (${unrealzd:+.2f})"
+        )
+
+    total_unrealized = total_val - total_cost
+    total_pct        = total_unrealized / total_cost * 100 if total_cost > 0 else 0
+    portfolio_value  = total_val + data["cash"]
+    starting         = data["starting_cash"]
+    overall_return   = (portfolio_value - starting) / starting * 100
+
+    lines += [
+        "",
+        f"💵 Cash: <b>${data['cash']:,.2f}</b>",
+        f"📊 Positions value: <b>${total_val:,.2f}</b> ({total_pct:+.1f}% unrealized)",
+        f"🏦 Total portfolio: <b>${portfolio_value:,.2f}</b>",
+        f"📈 Overall return: <b>{overall_return:+.1f}%</b> vs ${starting:,.0f} start",
+    ]
+
+    return "\n".join(lines)
+
+
+def paper_performance() -> str:
+    """Show paper trading win rate and P&L stats from closed trades."""
+    data    = _load()
+    history = data["history"]
+
+    if not history:
+        return (
+            "📄 <b>Paper Trading Performance</b>\n\n"
+            "No closed trades yet. Use /paper_sell to close a position."
+        )
+
+    wins     = [t for t in history if t["gain"] >= 0]
+    losses   = [t for t in history if t["gain"] < 0]
+    total_gl = sum(t["gain"] for t in history)
+    avg_ret  = sum(t["gain_pct"] for t in history) / len(history)
+    win_rate = len(wins) / len(history) * 100
+    best     = max(history, key=lambda t: t["gain_pct"])
+    worst    = min(history, key=lambda t: t["gain_pct"])
+
+    portfolio_value = sum(_live_price(p["ticker"]) or p["avg_price"] * p["shares"]
+                         for p in data["positions"]) + data["cash"]
+    starting = data["starting_cash"]
+    total_ret = (portfolio_value - starting) / starting * 100
+
+    return (
+        f"📄 <b>PAPER TRADING PERFORMANCE</b>\n\n"
+        f"<b>Closed trades:</b> {len(history)} "
+        f"({len(wins)}W / {len(losses)}L)\n"
+        f"<b>Win rate:</b> <b>{win_rate:.1f}%</b>\n"
+        f"<b>Avg return:</b> {avg_ret:+.1f}%\n"
+        f"<b>Total P&L:</b> ${total_gl:+.2f}\n\n"
+        f"📈 Best: <b>{best['ticker']}</b> {best['gain_pct']:+.1f}%\n"
+        f"📉 Worst: <b>{worst['ticker']}</b> {worst['gain_pct']:+.1f}%\n\n"
+        f"🏦 Portfolio return: <b>{total_ret:+.1f}%</b>\n"
+        f"<i>(vs ${starting:,.0f} starting capital)</i>"
+    )
+
+
+def paper_reset() -> str:
+    """Wipe paper portfolio and start fresh."""
+    _save({"positions": [], "history": [], "starting_cash": 10_000.0, "cash": 10_000.0})
+    return "🔄 Paper portfolio reset. Starting cash: <b>$10,000.00</b>"

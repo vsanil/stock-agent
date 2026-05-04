@@ -115,12 +115,30 @@ def build_weekly_recap() -> dict | None:
     def stats(returns):
         if not returns:
             return None
-        wins = sum(1 for _, r in returns if r > 0)
-        avg  = sum(r for _, r in returns) / len(returns)
+        vals  = [r for _, r in returns]
+        wins  = [r for r in vals if r > 0]
+        losses = [r for r in vals if r <= 0]
+        avg   = sum(vals) / len(vals)
+
+        # Simplified Sharpe: avg / std (illustrative, not annualized)
+        sharpe = None
+        if len(vals) > 1:
+            import math
+            std = math.sqrt(sum((r - avg) ** 2 for r in vals) / len(vals))
+            sharpe = round(avg / std, 2) if std > 0 else None
+
+        # Max drawdown (largest single loss)
+        max_dd = min(vals) if vals else None
+
         return {
             "count":      len(returns),
-            "wins":       wins,
+            "wins":       len(wins),
+            "win_rate":   round(len(wins) / len(vals) * 100, 1),
             "avg_return": round(avg, 1),
+            "avg_gain":   round(sum(wins) / len(wins), 1) if wins else None,
+            "avg_loss":   round(sum(losses) / len(losses), 1) if losses else None,
+            "sharpe":     sharpe,
+            "max_loss":   round(max_dd, 1) if max_dd is not None else None,
             "best":       max(returns, key=lambda x: x[1]),
             "worst":      min(returns, key=lambda x: x[1]),
         }

@@ -9,6 +9,14 @@ import time
 import anthropic
 import yfinance as yf
 
+from sentiment_analyzer import get_sentiment
+from options_flow import get_options_signal
+from insider_tracker import get_insider_signal
+from config_manager import (
+    load_signal_cache, save_signal_cache,
+    get_cached_signal, set_cached_signal,
+)
+
 MAX_TOKENS = 1500   # ~1000-1200 tokens actual output for 9 picks; 1500 gives safe headroom
 
 
@@ -27,9 +35,21 @@ def _get_news_headlines(ticker: str, max_headlines: int = 3) -> list[str]:
 # ── Build stock candidate payload ─────────────────────────────────────────────
 
 def _build_stock_candidates(screener_results: dict) -> list[dict]:
-    """Combine short + long stock candidates and enrich with Finnhub news."""
+    """
+    Combine short + long stock candidates and enrich with news + signals.
+
+    Signal fetching strategy (keeps morning run under ~3 min):
+      - Sentiment + insider: cached for 5 trading days (Gist). Cold fetch only
+        for new tickers or cache misses. Saves ~1.5s per ticker per day.
+      - Options flow: fetched live but ONLY for candidates with score >= 50.
+        Options data is stale after a day, so caching is not useful here.
+    """
     candidates = []
     seen = set()
+
+    # Load signal cache once — avoids one Gist round-trip per ticker
+    signal_cache = load_signal_cache()
+    cache_updated = False
 
     all_picks = (
         [("short_term", s) for s in screener_results.get("short_term", [])] +
@@ -92,10 +112,87 @@ def _build_stock_candidates(screener_results: dict) -> list[dict]:
 
         if ticker not in seen:
             entry["news_headlines"] = _get_news_headlines(ticker)
+
+            # ── Sentiment + insider: use cache (5-day TTL) ────────────────────
+            cached = get_cached_signal(signal_cache, ticker)
+
+            if cached:
+                # Cache hit — no network calls needed
+                print(f"[ai_analyzer] Cache hit for {ticker} signals.")
+                sent_data = cached.get("sentiment")
+                ins_data  = cached.get("insider")
+            else:
+                # Cache miss — fetch live and store
+                sent_data = None
+                ins_data  = None
+
+                try:
+                    sent_data = get_sentiment(ticker)
+                except Exception as exc:
+                    print(f"[ai_analyzer] Sentiment fetch error for {ticker}: {exc}")
+
+                try:
+                    ins_data = get_insider_signal(ticker)
+                except Exception as exc:
+                    print(f"[ai_analyzer] Insider fetch error for {ticker}: {exc}")
+
+                set_cached_signal(signal_cache, ticker, sent_data, ins_data)
+                cache_updated = True
+                time.sleep(0.3)   # brief delay only on live fetches
+
+            # Apply sentiment to entry
+            if sent_data:
+                try:
+                    entry["social_sentiment"] = {
+                        "label":           sent_data["label"],
+                        "score":           sent_data["score"],
+                        "reddit_mentions": sent_data["reddit_mentions"],
+                        "summary":         sent_data["summary"],
+                    }
+                except Exception:
+                    pass
+
+            # Apply insider to entry
+            if ins_data and ins_data.get("recent_buys", 0) > 0:
+                try:
+                    entry["insider_activity"] = {
+                        "recent_buys":   ins_data["recent_buys"],
+                        "is_cluster":    ins_data["is_cluster"],
+                        "total_value":   ins_data["total_value"],
+                        "insider_score": ins_data["insider_score"],
+                        "note":          ins_data["note"],
+                    }
+                except Exception:
+                    pass
+
+            # ── Options flow: live, but only for strong candidates ────────────
+            # Options data changes daily so caching is not useful.
+            # Skipping for score < 50 saves ~0.5-1s per weak candidate.
+            score = entry.get("score") or 0
+            if score >= 50:
+                try:
+                    opts = get_options_signal(ticker)
+                    if opts.get("unusual") or opts.get("bullish_flow") or opts.get("bearish_flow"):
+                        entry["options_flow"] = {
+                            "unusual":        opts["unusual"],
+                            "put_call_ratio": opts["put_call_ratio"],
+                            "bullish_flow":   opts["bullish_flow"],
+                            "bearish_flow":   opts["bearish_flow"],
+                            "note":           opts["note"],
+                        }
+                except Exception:
+                    pass
+
             seen.add(ticker)
-            time.sleep(0.2)
 
         candidates.append(entry)
+
+    # Persist cache to Gist only if we made any live fetches this run
+    if cache_updated:
+        try:
+            save_signal_cache(signal_cache)
+        except Exception as exc:
+            print(f"[ai_analyzer] WARNING: Could not save signal cache ({exc}).")
 
     return candidates
 
@@ -182,6 +279,7 @@ def _build_user_prompt(
     crypto_candidates: list[dict],
     config: dict,
     recent_losers: list[str] | None = None,
+    regime_info: dict | None = None,
 ) -> str:
     # Pre-build conditional blocks (backslashes not allowed inside f-string expressions)
     if recent_losers:
@@ -204,6 +302,24 @@ def _build_user_prompt(
         excluded_block = ""
 
     risk_block = _build_risk_profile_block(config.get("risk_profile", "moderate"))
+
+    # Market regime block
+    if regime_info and regime_info.get("regime"):
+        r = regime_info
+        regime_block = (
+            f"MARKET REGIME: {r['regime'].upper()}\n"
+            f"  VIX: {r.get('vix', 'N/A')} | SPY above 50MA: {r.get('spy_above_50ma')} "
+            f"| SPY above 200MA: {r.get('spy_above_200ma')}\n"
+            f"  Note: {r.get('note', '')}\n"
+            f"  Adjust pick aggressiveness accordingly:\n"
+            f"    bull → normal operation\n"
+            f"    neutral → normal, add brief caution note\n"
+            f"    volatile → prefer lower-beta picks, mention risk in thesis\n"
+            f"    bear → defensive sectors only (Utilities, Consumer Staples, Health Care), "
+            f"skip high-momentum plays"
+        )
+    else:
+        regime_block = ""
 
     return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
 
@@ -258,11 +374,19 @@ CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
   - If a coin scores well in both categories, place it only in the category where it scores highest.
   - Fill the other slot with the next-best coin that does NOT already appear in any category.
 
+{regime_block}
+
 {risk_block}
 
 {losers_block}
 
 {excluded_block}
+
+SIGNAL GUIDANCE (use in thesis where relevant):
+  - social_sentiment: StockTwits + Reddit signal. Label "bullish"/"hot" supports picks; "bearish" is a red flag.
+  - options_flow: unusual call volume or low put/call ratio confirms bullish bets by institutional traders.
+  - insider_activity: recent open-market buys by CEO/CFO are a strong conviction signal — always mention in thesis.
+  - analyst_target_mean / analyst_upside_pct: Wall Street consensus — large upside supports LT thesis.
 
 Stock Candidates:
 {json.dumps(stock_candidates, indent=2)}
@@ -380,9 +504,13 @@ def analyze_with_claude(
         print("[ai_analyzer] Building crypto candidates payload...")
         crypto_candidates = _build_crypto_candidates(crypto_results)
 
+    # Pass market regime context from screener results if available
+    regime_info = screener_results.get("regime") if isinstance(screener_results, dict) else None
+
     user_prompt = _build_user_prompt(
         stock_candidates, crypto_candidates, config,
         recent_losers=recent_losers or [],
+        regime_info=regime_info,
     )
 
     # Sonnet for main analysis — quality matters for picks

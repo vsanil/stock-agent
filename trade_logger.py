@@ -36,16 +36,19 @@ def open_trades(picks: dict) -> None:
         ticker = s.get("ticker")
         if not ticker or ticker in open_tickers:
             continue
+        entry = s.get("entry_price")
         log["open"].append({
-            "ticker":       ticker,
-            "asset_type":   "stock",
-            "entry_price":  s.get("entry_price"),
-            "target_price": s.get("target_price"),
-            "stop_loss":    s.get("stop_loss"),
-            "allocation":   s.get("allocation"),
-            "conviction":   s.get("conviction"),
-            "thesis":       s.get("thesis", ""),
-            "opened_date":  today,
+            "ticker":             ticker,
+            "asset_type":         "stock",
+            "entry_price":        entry,
+            "target_price":       s.get("target_price"),
+            "stop_loss":          s.get("stop_loss"),
+            "trailing_stop_pct":  s.get("trailing_stop_pct"),   # None = use fixed stop only
+            "highest_price_seen": entry,                         # high-water mark for trailing stop
+            "allocation":         s.get("allocation"),
+            "conviction":         s.get("conviction"),
+            "thesis":             s.get("thesis", ""),
+            "opened_date":        today,
         })
         open_tickers.add(ticker)
         new_count += 1
@@ -343,6 +346,83 @@ def reopen_trade(ticker: str) -> dict | None:
     save_trade_log(log)
     print(f"[trade_logger] Reopened position: {ticker.upper()}")
     return trade
+
+
+def update_trailing_stops(current_prices: dict, default_trailing_pct: float = 5.0) -> list[dict]:
+    """
+    Update high-water marks and evaluate trailing stops for all open trades.
+    For each trade:
+      1. If current price > highest_price_seen → update high-water mark
+      2. Compute trailing stop = highest_price_seen * (1 - trailing_pct / 100)
+      3. If current price <= trailing stop → close the trade (outcome = "trailing_stop")
+
+    Returns list of newly closed trades (same format as check_and_close_trades).
+    Only applies to trades where trailing_stop_pct is set, or uses default_trailing_pct.
+    """
+    today = date.today().isoformat()
+    log   = load_trade_log()
+
+    if not log["open"]:
+        return []
+
+    still_open    = []
+    newly_closed  = []
+    hwm_updated   = False   # track if any high-water mark changed
+
+    for trade in log["open"]:
+        ticker  = trade["ticker"]
+        current = current_prices.get(ticker)
+
+        if current is None:
+            still_open.append(trade)
+            continue
+
+        current = float(current)
+        entry   = float(trade.get("entry_price") or current)
+
+        # Update high-water mark
+        hwm = float(trade.get("highest_price_seen") or entry)
+        if current > hwm:
+            trade["highest_price_seen"] = round(current, 2)
+            hwm         = current
+            hwm_updated = True
+
+        # Compute trailing stop level
+        trail_pct     = float(trade.get("trailing_stop_pct") or default_trailing_pct)
+        trailing_stop = hwm * (1 - trail_pct / 100)
+
+        # Only trigger if price is up from entry (trailing stop only locks in gains)
+        # Below entry, the regular stop_loss in check_and_close_trades handles it
+        if current >= entry and current <= trailing_stop:
+            return_pct = (current - entry) / entry * 100
+            allocation = float(trade.get("allocation") or 0)
+            gain_usd   = round(allocation * return_pct / 100, 2)
+            closed = {
+                **trade,
+                "closed_date":    today,
+                "closed_price":   round(current, 2),
+                "outcome":        "trailing_stop",
+                "trailing_stop_level": round(trailing_stop, 2),
+                "highest_reached": round(hwm, 2),
+                "return_pct":     round(return_pct, 2),
+                "gain_usd":       gain_usd,
+            }
+            log["closed"].append(closed)
+            newly_closed.append(closed)
+            print(f"[trade_logger] Trailing stop hit: {ticker} @ ${current:.2f} "
+                  f"(trail stop ${trailing_stop:.2f}, peak ${hwm:.2f}, {return_pct:+.1f}%)")
+        else:
+            still_open.append(trade)
+
+    if newly_closed:
+        log["open"] = still_open
+        save_trade_log(log)
+    elif hwm_updated:
+        # Save updated high-water marks even if no trailing stop triggered
+        log["open"] = still_open
+        save_trade_log(log)
+
+    return newly_closed
 
 
 def get_weekly_closed_trades() -> list[dict]:

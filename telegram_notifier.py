@@ -6,6 +6,7 @@ Replaces whatsapp.py. Uses Telegram Bot API via plain requests (no heavy SDK).
 import os
 import time
 import html
+import threading
 import requests
 from datetime import date
 
@@ -319,6 +320,12 @@ def format_daily_message(picks: dict, config: dict) -> str:
         "/watch  /exclude  /watchlist\n"
         "\n<b>Risk &amp; Budgets</b>\n"
         "/set_risk  /set_st  /set_lt  /set_cst  /set_clt\n"
+        "\n<b>Intelligence</b>\n"
+        "/regime  /backtest\n"
+        "\n<b>Price Alerts</b>\n"
+        "/alert  /alerts  /unalert\n"
+        "\n<b>Paper Trading</b>\n"
+        "/paper_buy  /paper_sell  /paper_portfolio  /paper_perf  /paper_reset\n"
         "\n<b>Control</b>\n"
         "/status  /pause  /resume  /reset  /help",
     ]
@@ -810,10 +817,18 @@ _PARAM_PROMPTS: dict[str, str] = {
                  "<i>e.g.</i>  <code>energy</code>  ·  <code>oil stocks</code>"),
     "set_risk": ("⚖️ <b>Risk level?</b>\n"
                  "<code>conservative</code>   ·   <code>moderate</code>   ·   <code>aggressive</code>"),
-    "set_st":   "💰 <b>Stock short-term budget per trade?</b>  <i>e.g.</i>  <code>30</code>",
-    "set_lt":   "💰 <b>Stock long-term monthly budget?</b>  <i>e.g.</i>  <code>50</code>",
-    "set_cst":  "💰 <b>Crypto short-term budget per trade?</b>  <i>e.g.</i>  <code>20</code>",
-    "set_clt":  "💰 <b>Crypto long-term monthly budget?</b>  <i>e.g.</i>  <code>30</code>",
+    "set_st":    "💰 <b>Stock short-term budget per trade?</b>  <i>e.g.</i>  <code>30</code>",
+    "set_lt":    "💰 <b>Stock long-term monthly budget?</b>  <i>e.g.</i>  <code>50</code>",
+    "set_cst":   "💰 <b>Crypto short-term budget per trade?</b>  <i>e.g.</i>  <code>20</code>",
+    "set_clt":   "💰 <b>Crypto long-term monthly budget?</b>  <i>e.g.</i>  <code>30</code>",
+    "alert":     ("🔔 <b>Set a price alert</b>\n"
+                  "<i>e.g.</i>  <code>NVDA 1000</code>  ·  <code>AAPL below 175</code>  ·  <code>TSLA above 300</code>"),
+    "unalert":   ("🔕 <b>Remove which alert?</b>\n"
+                  "<i>e.g.</i>  <code>NVDA</code>  (removes all NVDA alerts)  ·  <code>NVDA 1000</code>"),
+    "paper_buy": ("📄 <b>Paper buy — what to simulate?</b>\n"
+                  "<i>e.g.</i>  <code>AAPL 10</code>  ·  <code>AAPL 182.50 10</code>"),
+    "paper_sell":("📄 <b>Paper sell — which position?</b>\n"
+                  "<i>e.g.</i>  <code>AAPL</code>  ·  <code>AAPL 5</code>  (partial sell)"),
 }
 
 
@@ -1030,6 +1045,18 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command in key_map:
         return _parse_and_execute(f"SET {key_map[command]} {text}", original=text, chat_id=chat_id)
 
+    if command == "alert":
+        return _parse_and_execute(f"ALERT {text}", original=f"/alert {text}", chat_id=chat_id)
+
+    if command == "unalert":
+        return _parse_and_execute(f"UNALERT {text}", original=f"/unalert {text}", chat_id=chat_id)
+
+    if command == "paper_buy":
+        return _parse_and_execute(f"PAPER BUY {text}", original=f"/paper_buy {text}", chat_id=chat_id)
+
+    if command == "paper_sell":
+        return _parse_and_execute(f"PAPER SELL {text}", original=f"/paper_sell {text}", chat_id=chat_id)
+
     return _handle_natural_language(text)
 
 
@@ -1218,6 +1245,126 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         except Exception as exc:
             return f"⚠️ Could not fetch prices: {exc}"
 
+    # ── Market regime ─────────────────────────────────────────────────────────
+    if text == "REGIME":
+        try:
+            from market_regime import get_market_regime, regime_emoji
+            r = get_market_regime()
+            emoji = regime_emoji(r["regime"])
+            return (
+                f"{emoji} <b>MARKET REGIME: {r['regime'].upper()}</b>\n\n"
+                f"<b>VIX:</b> {r['vix'] or 'N/A'}\n"
+                f"<b>SPY vs 50-day MA:</b> {'Above ✅' if r['spy_above_50ma'] else 'Below ⚠️' if r['spy_above_50ma'] is not None else 'N/A'}\n"
+                f"<b>SPY vs 200-day MA:</b> {'Above ✅' if r['spy_above_200ma'] else 'Below 🔴' if r['spy_above_200ma'] is not None else 'N/A'}\n\n"
+                f"<i>{r['note']}</i>"
+            )
+        except Exception as exc:
+            return f"⚠️ Could not fetch market regime: {exc}"
+
+    # ── Price alerts ──────────────────────────────────────────────────────────
+    if text == "ALERTS":
+        from price_alert_manager import list_alerts
+        return list_alerts(chat_id)
+
+    if text == "ALERT":
+        _prompt_for_param("alert", chat_id)
+        return ""
+
+    if text.startswith("ALERT "):
+        from price_alert_manager import add_alert
+        parts = text[6:].strip().split()
+        # Formats: ALERT NVDA 1000  |  ALERT NVDA ABOVE 1000  |  ALERT NVDA BELOW 900
+        try:
+            if len(parts) >= 3 and parts[1].upper() in ("ABOVE", "BELOW"):
+                ticker, direction, price_str = parts[0], parts[1].lower(), parts[2]
+            elif len(parts) >= 2:
+                ticker, price_str = parts[0], parts[1]
+                direction = "auto"
+            else:
+                return "⚠️ Usage: /alert NVDA 1000  or  /alert NVDA below 900"
+            return add_alert(chat_id, ticker, float(price_str.replace(",", "")), direction)
+        except ValueError:
+            return "⚠️ Usage: /alert NVDA 1000  or  /alert NVDA below 900"
+
+    if text == "UNALERT":
+        _prompt_for_param("unalert", chat_id)
+        return ""
+
+    if text.startswith("UNALERT "):
+        from price_alert_manager import remove_alert
+        parts = text[8:].strip().split()
+        ticker = parts[0] if parts else ""
+        price  = float(parts[1]) if len(parts) >= 2 else None
+        if not ticker:
+            return "⚠️ Usage: /unalert NVDA  or  /unalert NVDA 1000"
+        return remove_alert(chat_id, ticker, price)
+
+    # ── Paper trading ─────────────────────────────────────────────────────────
+    if text in ("PAPER BUY",):
+        _prompt_for_param("paper_buy", chat_id)
+        return ""
+
+    if text.startswith("PAPER BUY "):
+        from paper_trader import paper_buy
+        parts = text[10:].strip().split()
+        # Formats: PAPER BUY AAPL 10  |  PAPER BUY AAPL 182.50 10
+        try:
+            if len(parts) == 2:
+                ticker, shares = parts[0], float(parts[1])
+                return paper_buy(ticker, shares)
+            elif len(parts) == 3:
+                ticker, price, shares = parts[0], float(parts[1]), float(parts[2])
+                return paper_buy(ticker, shares, price)
+            else:
+                return "⚠️ Usage: /paper_buy AAPL 10  or  /paper_buy AAPL 182.50 10"
+        except ValueError:
+            return "⚠️ Usage: /paper_buy AAPL 10  or  /paper_buy AAPL 182.50 10"
+
+    if text in ("PAPER SELL",):
+        _prompt_for_param("paper_sell", chat_id)
+        return ""
+
+    if text.startswith("PAPER SELL "):
+        from paper_trader import paper_sell
+        parts = text[11:].strip().split()
+        try:
+            ticker = parts[0] if parts else ""
+            if not ticker:
+                return "⚠️ Usage: /paper_sell AAPL  or  /paper_sell AAPL 5"
+            shares = float(parts[1]) if len(parts) >= 2 else None
+            price  = float(parts[2]) if len(parts) >= 3 else None
+            return paper_sell(ticker, shares, price)
+        except ValueError:
+            return "⚠️ Usage: /paper_sell AAPL  or  /paper_sell AAPL 5"
+
+    if text == "PAPER PORTFOLIO":
+        from paper_trader import paper_portfolio
+        return paper_portfolio()
+
+    if text == "PAPER PERF":
+        from paper_trader import paper_performance
+        return paper_performance()
+
+    if text == "PAPER RESET":
+        from paper_trader import paper_reset
+        return paper_reset()
+
+    # ── Backtest ──────────────────────────────────────────────────────────────
+    if text == "BACKTEST":
+        send_message("⏳ Running backtest over the last 6 months… results in ~2 min.",
+                     chat_id=chat_id)
+
+        def _run_and_send():
+            try:
+                from backtester import run_backtest, format_backtest_message
+                result = run_backtest()
+                send_message(format_backtest_message(result), chat_id=chat_id)
+            except Exception as exc:
+                send_message(f"⚠️ Backtest failed: {exc}", chat_id=chat_id)
+
+        threading.Thread(target=_run_and_send, daemon=True).start()
+        return None  # webhook already got its "200 OK" — no second message from here
+
     if text in ("HELP", "START"):
         return (
             "📋 <b>Available commands:</b>\n"
@@ -1246,6 +1393,20 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "/exclude energy utils     — never pick from these sectors\n"
             "/exclude none             — clear sector exclusions\n"
             "/watchlist                — show AI settings summary\n"
+            "\n<b>— Market Intelligence —</b>\n"
+            "/regime                   — current market regime (bull/bear/volatile)\n"
+            "/backtest                 — historical strategy backtest\n"
+            "\n<b>— Price Alerts —</b>\n"
+            "/alert NVDA 1000          — notify when NVDA crosses $1000\n"
+            "/alert NVDA below 900     — notify when NVDA drops below $900\n"
+            "/alerts                   — list all active alerts\n"
+            "/unalert NVDA             — remove NVDA alerts\n"
+            "\n<b>— Paper Trading —</b>\n"
+            "/paper_buy AAPL 10        — simulate buying 10 shares of AAPL\n"
+            "/paper_sell AAPL          — simulate selling AAPL position\n"
+            "/paper_portfolio          — paper P&amp;L summary\n"
+            "/paper_perf               — paper trading win rate\n"
+            "/paper_reset              — reset paper portfolio to $10k\n"
             "\n<b>— Control —</b>\n"
             "/pause                    — stop daily picks\n"
             "/resume                   — restart daily picks\n"
