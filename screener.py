@@ -669,11 +669,16 @@ def run_screener(
     print(f"[screener] Top long-term:  {[s['ticker'] for s in long_top]}")
     print(f"[screener] Regime: {regime} — {regime_info['note']}")
 
-    return {
+    result = {
         "short_term": short_top,
         "long_term":  long_top,
         "regime":     regime_info,
     }
+
+    # Save pre-scored candidates for the midnight → morning cache path.
+    # The morning run loads this instead of re-running the full screener.
+    # save=False when called from the prescreener itself (agent handles the save).
+    return result
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────

@@ -37,6 +37,7 @@ PENDING_STATE_FILENAME = "pending_state.json"   # Conversation state for multi-s
 PAPER_PORTFOLIO_FILE   = "paper_portfolio.json" # Paper trading portfolio (simulated trades)
 PRICE_ALERTS_FILE      = "price_alerts.json"    # User price alerts
 SIGNAL_CACHE_FILE      = "signal_cache.json"    # Cached sentiment + insider signals (5-day TTL)
+SCREENER_CACHE_FILE    = "screener_cache.json"  # Pre-scored candidates from midnight run
 
 
 def _gist_headers() -> dict:
@@ -271,6 +272,48 @@ def set_cached_signal(cache: dict, ticker: str, sentiment: dict | None,
         "insider":     insider,
         "cached_date": date.today().isoformat(),
     }
+
+
+# ── Screener cache (midnight pre-score, consumed by 8 AM morning run) ────────
+
+SCREENER_CACHE_MAX_AGE_HOURS = 10   # midnight ET → 8 AM ET = 8h; 10h gives buffer
+
+
+def save_screener_cache(stock_results: dict, crypto_results: dict) -> None:
+    """
+    Save pre-scored screener candidates from the midnight run.
+    Stored as screener_cache.json in the Gist.
+    """
+    from datetime import datetime
+    payload = {
+        "cached_at":  datetime.utcnow().isoformat(),
+        "stocks":     stock_results,
+        "crypto":     crypto_results,
+    }
+    _write_gist_file(SCREENER_CACHE_FILE, payload)
+    print("[config_manager] Screener cache saved to Gist.")
+
+
+def load_screener_cache() -> dict | None:
+    """
+    Load the midnight screener cache if it exists and is fresh (< 10h old).
+    Returns the cache dict {cached_at, stocks, crypto} or None if stale/missing.
+    """
+    from datetime import datetime, timedelta
+    data = _load_gist_file(SCREENER_CACHE_FILE)
+    if not data:
+        return None
+    try:
+        cached_at = datetime.fromisoformat(data["cached_at"])
+        age = datetime.utcnow() - cached_at
+        if age > timedelta(hours=SCREENER_CACHE_MAX_AGE_HOURS):
+            print(f"[config_manager] Screener cache is {age} old — too stale, ignoring.")
+            return None
+        print(f"[config_manager] Screener cache hit — {age} old.")
+        return data
+    except Exception as exc:
+        print(f"[config_manager] Screener cache invalid ({exc}).")
+        return None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

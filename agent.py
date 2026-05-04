@@ -19,7 +19,11 @@ from datetime import datetime, date, timedelta
 
 import pytz
 
-from config_manager import get_config, save_picks, load_picks, save_weekly_pick, get_dynamic_pick_counts, load_trade_log
+from config_manager import (
+    get_config, save_picks, load_picks, save_weekly_pick,
+    get_dynamic_pick_counts, load_trade_log,
+    save_screener_cache, load_screener_cache,
+)
 from trade_logger import open_trades, check_and_close_trades, update_trailing_stops
 from price_alert_manager import check_all_alerts
 from screener import run_screener
@@ -141,7 +145,7 @@ MOCK_CRYPTO_CANDIDATES = {
 def detect_run_mode(now_et: datetime) -> str:
     """Auto-detect run mode by ET hour/weekday. Override with RUN_MODE env var."""
     forced = os.environ.get("RUN_MODE", "").lower()
-    if forced in ("morning", "confirmation", "weekly", "close_check"):
+    if forced in ("morning", "confirmation", "weekly", "close_check", "prescreener"):
         return forced
     if now_et.weekday() == 5 and now_et.hour < 10:   # Saturday morning
         return "weekly"
@@ -183,6 +187,50 @@ def _run_crypto_with_retry() -> dict:
     return empty
 
 
+# ── Midnight pre-screener (runs at midnight ET, caches candidates for 8 AM) ───
+
+def run_prescreener(config: dict):
+    """
+    Midnight run — scores all 600 tickers and saves top candidates to Gist.
+    No Claude call, no Telegram message. Runs silently in ~90s.
+    The 8 AM morning run loads this cache and skips straight to Claude.
+    """
+    print("[agent] Running midnight pre-screener...")
+
+    if is_market_holiday(datetime.now(ET).date()):
+        print("[agent] Market holiday tomorrow — skipping pre-screener.")
+        return
+
+    stock_results = {"short_term": [], "long_term": []}
+    try:
+        stock_results = run_screener(
+            watchlist=config.get("watchlist", []),
+            excluded_sectors=config.get("excluded_sectors", []),
+        )
+        print(f"[agent] Pre-screener: "
+              f"{len(stock_results['short_term'])} ST, "
+              f"{len(stock_results['long_term'])} LT candidates cached.")
+    except Exception as exc:
+        print(f"[agent] Pre-screener stock screener failed: {exc}")
+
+    crypto_results = {"short_term": [], "long_term": []}
+    if config.get("crypto_enabled", True):
+        try:
+            crypto_results = _run_crypto_with_retry()
+            print(f"[agent] Pre-screener: "
+                  f"{len(crypto_results['short_term'])} crypto ST, "
+                  f"{len(crypto_results['long_term'])} crypto LT cached.")
+        except Exception as exc:
+            print(f"[agent] Pre-screener crypto screener failed: {exc}")
+
+    try:
+        save_screener_cache(stock_results, crypto_results)
+    except Exception as exc:
+        print(f"[agent] Pre-screener cache save failed: {exc}")
+
+    print("[agent] Midnight pre-screener complete. Morning run will use cache.")
+
+
 # ── Morning run ───────────────────────────────────────────────────────────────
 
 def run_morning(config: dict, now_et: datetime):
@@ -208,7 +256,7 @@ def run_morning(config: dict, now_et: datetime):
         macro_context    = {}
 
         if not is_weekend and not is_holiday:
-            # ── Macro context (SPY%, 10Y yield, VIX) ─────────────────────────
+            # ── Macro context (SPY%, 10Y yield, VIX) — always fetched live ───
             try:
                 import yfinance as yf
                 spy_hist = yf.Ticker("SPY").history(period="2d")
@@ -235,20 +283,36 @@ def run_morning(config: dict, now_et: datetime):
             except Exception as exc:
                 print(f"[agent] Macro context fetch failed (non-critical): {exc}")
 
-            print("[agent] Running stock screener...")
+            # ── Stock screener: use midnight cache if fresh, else run live ────
+            cache = None
             try:
-                stock_candidates = run_screener(
-                    watchlist=config.get("watchlist", []),
-                    excluded_sectors=config.get("excluded_sectors", []),
-                )
+                cache = load_screener_cache()
             except Exception as exc:
-                print(f"[agent] Stock screener failed: {exc}")
-                _alert(f"⚠ Stock screener error: {exc}")
+                print(f"[agent] Screener cache load failed (non-critical): {exc}")
 
+            if cache:
+                print("[agent] Using midnight screener cache — skipping live screener.")
+                stock_candidates = cache["stocks"]
+            else:
+                print("[agent] No fresh screener cache — running live stock screener...")
+                try:
+                    stock_candidates = run_screener(
+                        watchlist=config.get("watchlist", []),
+                        excluded_sectors=config.get("excluded_sectors", []),
+                    )
+                except Exception as exc:
+                    print(f"[agent] Stock screener failed: {exc}")
+                    _alert(f"⚠ Stock screener error: {exc}")
+
+        # ── Crypto: use midnight cache if fresh, else run live ────────────────
         crypto_candidates = {"short_term": [], "long_term": []}
         if config.get("crypto_enabled", True):
-            print("[agent] Running crypto screener (with retry)...")
-            crypto_candidates = _run_crypto_with_retry()
+            if cache and cache.get("crypto"):
+                print("[agent] Using midnight screener cache for crypto.")
+                crypto_candidates = cache["crypto"]
+            else:
+                print("[agent] Running crypto screener (with retry)...")
+                crypto_candidates = _run_crypto_with_retry()
 
     has_stocks = bool(stock_candidates["short_term"] or stock_candidates["long_term"])
     has_crypto = bool(crypto_candidates["short_term"] or crypto_candidates["long_term"])
@@ -554,7 +618,9 @@ def main():
         print("[agent] Agent is paused. Skipping.")
         return
 
-    if mode == "morning":
+    if mode == "prescreener":
+        run_prescreener(config)
+    elif mode == "morning":
         run_morning(config, now_et)
     elif mode == "weekly":
         run_weekly_recap(config, now_et)
