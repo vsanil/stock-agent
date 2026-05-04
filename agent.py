@@ -254,6 +254,7 @@ def run_morning(config: dict, now_et: datetime):
     else:
         stock_candidates = {"short_term": [], "long_term": []}
         macro_context    = {}
+        cache            = None   # screener cache — set inside weekday block
 
         if not is_weekend and not is_holiday:
             # ── Macro context (SPY%, 10Y yield, VIX) — always fetched live ───
