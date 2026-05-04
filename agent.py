@@ -223,12 +223,19 @@ def run_prescreener(config: dict):
         except Exception as exc:
             print(f"[agent] Pre-screener crypto screener failed: {exc}")
 
-    try:
-        save_screener_cache(stock_results, crypto_results)
-    except Exception as exc:
-        print(f"[agent] Pre-screener cache save failed: {exc}")
-
-    print("[agent] Midnight pre-screener complete. Morning run will use cache.")
+    # Only cache if the stock screener returned usable results.
+    # An empty cache would cause the morning run to skip live screening
+    # and send a briefing with no stock picks.
+    has_stocks = bool(stock_results.get("short_term") or stock_results.get("long_term"))
+    if has_stocks:
+        try:
+            save_screener_cache(stock_results, crypto_results)
+            print("[agent] Midnight pre-screener complete. Morning run will use cache.")
+        except Exception as exc:
+            print(f"[agent] Pre-screener cache save failed: {exc}")
+    else:
+        print("[agent] Pre-screener: stock results empty — cache NOT saved. "
+              "Morning run will fall back to live screener.")
 
 
 # ── Morning run ───────────────────────────────────────────────────────────────
