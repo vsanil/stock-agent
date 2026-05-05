@@ -14,6 +14,8 @@ from config_manager import (
     load_picks,
     load_pending_state, save_pending_state, clear_pending_state,
     load_user_trade_log,
+    get_pending_users, add_pending_user, remove_pending_user,
+    get_allowed_users,
 )
 from formatters import (
     _esc, _stars, _p, _upside, _short_company,
@@ -220,6 +222,27 @@ def handle_incoming_command(message_text: str, chat_id: str | None = None) -> st
     else:
         # Any new slash command cancels pending state
         clear_pending_state(chat_id)
+
+    # ── Unknown user guard ────────────────────────────────────────────────────
+    # Allow /start through (it handles its own pending logic)
+    # Block everything else until admin approves
+    cmd_lower = text.lstrip("/").split()[0].lower() if text else ""
+    if not _is_admin(chat_id) and chat_id not in get_allowed_users():
+        if cmd_lower != "start":
+            pending = get_pending_users()
+            if chat_id in pending:
+                send_message(
+                    "⏳ <b>Your access request is pending.</b>\n"
+                    "You'll receive a notification as soon as you're approved.",
+                    chat_id=chat_id,
+                )
+            else:
+                send_message(
+                    "👋 <b>Welcome to Stockwise!</b>\n\n"
+                    "Send /start to request access.",
+                    chat_id=chat_id,
+                )
+            return ""
 
     reply = _parse_and_execute(text.upper(), original=text, chat_id=chat_id)
     if reply:
@@ -432,6 +455,16 @@ def handle_callback_query(callback_query: dict) -> None:
         target_chat = parts[1] if len(parts) > 1 else chat_id
         clear_pending_state(target_chat)
         send_message("👍 Cancelled.", chat_id=chat_id)
+        return
+
+    if action == "approve_user":
+        new_id = parts[1] if len(parts) > 1 else ""
+        if not new_id:
+            send_message("⚠️ Could not read user ID from button.", chat_id=chat_id)
+            return
+        # Reuse the /adduser logic
+        reply = _parse_and_execute(f"ADDUSER {new_id}", original=f"/adduser {new_id}", chat_id=chat_id)
+        send_message(reply or f"✅ {new_id} approved.", chat_id=chat_id)
         return
 
     if action == "buy":
@@ -1479,29 +1512,71 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 timeout=5,
             ).json()
             username = resp.get("result", {}).get("username", "")
-            bot_link = f"https://t.me/{username}" if username else "https://t.me/StockwiseBot"
+            bot_link = f"https://t.me/{username}?start=ref" if username else "https://t.me/Stockwise?start=ref"
         except Exception:
-            bot_link = "https://t.me/StockwiseBot"
+            bot_link = "https://t.me/Stockwise?start=ref"
 
         return (
             f"📲 <b>Share Stockwise with friends:</b>\n\n"
-            f"Hey! I'm using Stockwise — a personal AI stock advisor bot that sends daily stock &amp; crypto picks, "
+            f"Hey! I'm using Stockwise — a personal AI stock advisor that sends daily stock &amp; crypto picks, "
             f"price alerts, and weekly performance recaps.\n\n"
             f"Join here 👇\n"
             f"{bot_link}\n\n"
-            f"<i>(Tap the link — it'll install Telegram if you don't have it, then open the bot automatically)</i>"
+            f"<i>(Tap the link to open Stockwise directly in Telegram)</i>"
         )
 
-    # ── /start ────────────────────────────────────────────────────────────────
-    if text == "START":
+    # ── /start (also handles deep link: /start ref) ───────────────────────────
+    if text == "START" or text.startswith("START "):
+        # Known user — show welcome back
+        if _is_admin(chat_id) or chat_id in get_allowed_users():
+            return (
+                "👋 <b>Welcome back to Stockwise!</b>\n\n"
+                "/today — today's picks\n"
+                "/positions — your open trades\n"
+                "/help — all commands\n\n"
+                "<i>Questions? Just type naturally.</i>"
+            )
+        # Unknown user — add to pending and notify admin
+        pending = get_pending_users()
+        if chat_id in pending:
+            return (
+                "⏳ <b>Your request is already pending.</b>\n"
+                "You'll be notified as soon as the admin approves your access."
+            )
+        # Fetch their Telegram profile for the admin notification
+        first_name, username = "", ""
+        try:
+            resp = requests.get(
+                TELEGRAM_API.format(token=_bot_token(), method="getChat"),
+                params={"chat_id": chat_id}, timeout=5,
+            ).json().get("result", {})
+            first_name = resp.get("first_name", "")
+            username   = resp.get("username", "")
+        except Exception:
+            pass
+        add_pending_user(chat_id, first_name=first_name, username=username)
+        # Notify admin with a one-tap approve button
+        owner = os.environ.get("TELEGRAM_CHAT_ID", "")
+        display = f"@{username}" if username else first_name or chat_id
+        admin_msg = (
+            f"🔔 <b>New access request</b>\n\n"
+            f"Name: <b>{_esc(first_name)}</b>"
+            + (f"  (@{_esc(username)})" if username else "") +
+            f"\nChat ID: <code>{chat_id}</code>\n\n"
+            f"Tap to approve 👇"
+        )
+        if owner:
+            send_inline_keyboard(
+                admin_msg,
+                [[{"text": f"✅ Approve {_esc(first_name or chat_id)}",
+                   "callback_data": f"approve_user|{chat_id}"}]],
+                chat_id=owner,
+            )
         return (
-            "👋 <b>Welcome to Stock Advisor Bot!</b>\n\n"
-            "You're receiving daily stock and crypto picks with short-term and long-term ideas.\n\n"
-            "<b>Quick start:</b>\n"
-            "/today — today's picks\n"
-            "/positions — your open trades\n"
-            "/help — all commands\n\n"
-            "<i>Questions? Just type naturally — I understand plain English.</i>"
+            "👋 <b>Welcome to Stockwise!</b>\n\n"
+            "Your access request has been sent to the admin.\n"
+            "You'll receive a notification as soon as you're approved — usually within a few hours.\n\n"
+            "<i>Stockwise sends daily AI-curated stock &amp; crypto picks, price alerts, and weekly performance recaps.</i>"
         )
 
     # ── Admin: user management ────────────────────────────────────────────────
@@ -1514,12 +1589,27 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         from config_manager import add_allowed_user
         new_id = parts[1].strip()
         add_allowed_user(new_id)
+        remove_pending_user(new_id)
+        # Build welcome message for the new user
+        picks     = load_picks()
+        user_cfg  = {**get_config(), **get_user_config(new_id)}
+        picks_msg = ""
+        if picks:
+            try:
+                picks_msg = "\n\n" + format_daily_message(picks, user_cfg)
+            except Exception:
+                pass
         send_message(
-            "✅ <b>You've been approved!</b>\n\n"
-            "Welcome to Stock Advisor Bot. Send /start to begin.",
+            "✅ <b>You're in! Welcome to Stockwise.</b>\n\n"
+            "You'll receive daily AI-curated stock &amp; crypto picks every morning.\n\n"
+            "<b>Quick start:</b>\n"
+            "/today — today's picks\n"
+            "/help — all commands\n\n"
+            "<i>Questions? Just type naturally.</i>"
+            + picks_msg,
             chat_id=new_id,
         )
-        return f"✅ Added <code>{new_id}</code> to allowlist. They've been notified."
+        return f"✅ <code>{new_id}</code> approved and welcomed. Today's picks sent."
 
     if text.startswith("REMOVEUSER ") or text == "REMOVEUSER":
         if not _is_admin(chat_id):

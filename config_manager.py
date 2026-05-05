@@ -43,6 +43,7 @@ GIST_FILENAME          = "config.json"
 PICKS_FILENAME         = "picks.json"           # Stores morning picks for 10:30 AM confirmation
 WEEKLY_PICKS_FILENAME  = "weekly_picks.json"    # Accumulates Mon–Fri picks for Saturday recap
 PENDING_STATE_FILENAME = "pending_state.json"   # Conversation state for multi-step commands
+PENDING_USERS_FILE     = "pending_users.json"   # Users awaiting admin approval
 PRICE_ALERTS_FILE      = "price_alerts.json"    # User price alerts (already per-user by chat_id)
 SIGNAL_CACHE_FILE      = "signal_cache.json"    # Cached sentiment + insider signals (5-day TTL)
 SCREENER_CACHE_FILE    = "screener_cache.json"  # Pre-scored candidates from midnight run
@@ -220,6 +221,33 @@ def remove_allowed_user(chat_id: str) -> list[str]:
     update_config("allowed_users", users)
     print(f"[config_manager] Removed user {chat_id} from allowlist.")
     return users
+
+
+# ── Pending users (awaiting admin approval) ──────────────────────────────────
+
+def get_pending_users() -> dict:
+    """Return pending users dict: { chat_id: {first_name, username, requested_at} }"""
+    return _load_gist_file(PENDING_USERS_FILE) or {}
+
+
+def add_pending_user(chat_id: str, first_name: str = "", username: str = "") -> None:
+    """Add a user to the pending approval list."""
+    from datetime import datetime
+    pending = get_pending_users()
+    pending[str(chat_id)] = {
+        "first_name":    first_name,
+        "username":      username,
+        "requested_at":  datetime.utcnow().isoformat(),
+    }
+    _write_gist_file(PENDING_USERS_FILE, pending)
+
+
+def remove_pending_user(chat_id: str) -> None:
+    """Remove a user from the pending list (after approval or rejection)."""
+    pending = get_pending_users()
+    if str(chat_id) in pending:
+        del pending[str(chat_id)]
+        _write_gist_file(PENDING_USERS_FILE, pending)
 
 
 # ── Picks storage (for 10:30 AM confirmation run) ────────────────────────────
