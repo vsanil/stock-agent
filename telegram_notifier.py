@@ -267,7 +267,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         body = "\n\n".join(_pick_row_st(i, s) for i, s in enumerate(st_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>📈 <b>SHORT TERM</b>  <code>${short_budget} / trade</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>📈 <b>STOCK — SHORT TERM</b>  <code>${short_budget} / trade</code>\n\n{body}</blockquote>",
         ]
 
     # ── Long-term stocks — blue tinted blockquote ─────────────────────────────
@@ -275,7 +275,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         body = "\n\n".join(_pick_row_lt(i, s) for i, s in enumerate(lt_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>🏦 <b>LONG TERM</b>  <code>${long_budget} / mo DCA</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>🏦 <b>STOCK — LONG TERM</b>  <code>${long_budget} / mo DCA</code>\n\n{body}</blockquote>",
         ]
 
     # ── Crypto short-term — orange tinted blockquote ──────────────────────────
@@ -283,7 +283,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         body = "\n\n".join(_pick_row_cst(i, c) for i, c in enumerate(cst_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>🪙 <b>CRYPTO ST</b>  <code>${crypto_st_budget} / trade</code>  ⚡ HIGH RISK\n\n{body}</blockquote>",
+            f"<blockquote expandable>🪙 <b>CRYPTO — SHORT TERM</b>  <code>${crypto_st_budget} / trade</code>  ⚡ HIGH RISK\n\n{body}</blockquote>",
         ]
 
     # ── Crypto long-term — purple tinted blockquote ───────────────────────────
@@ -291,7 +291,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
         body = "\n\n".join(_pick_row_clt(i, c) for i, c in enumerate(clt_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>💎 <b>CRYPTO LT</b>  <code>${crypto_lt_budget} / mo DCA</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>💎 <b>CRYPTO — LONG TERM</b>  <code>${crypto_lt_budget} / mo DCA</code>\n\n{body}</blockquote>",
         ]
 
     # ── Footer ────────────────────────────────────────────────────────────────
