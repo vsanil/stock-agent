@@ -369,7 +369,7 @@ def format_daily_message(picks: dict, config: dict) -> str:
             seen_sectors.add(s)
     sector_line = f"🏭 <i>Sectors: {_esc(', '.join(sector_list))}</i>" if sector_list else ""
 
-    lines += ["", "⚠️ <i>Not financial advice. Send /help for all commands.</i>"]
+    lines += ["", "⚠️ <i>Not financial advice.</i>  📋 /help  ·  📲 /share"]
     if sector_line:
         lines.append(sector_line)
 
@@ -511,7 +511,7 @@ def handle_incoming_command(message_text: str, chat_id: str | None = None) -> st
         # Append /help hint to every command response except /help itself and daily picks
         cmd = text.lstrip("/").split()[0].lower() if text else ""
         if cmd not in ("help", "start", "today") and not reply.startswith("📋"):
-            reply = reply + "\n\n<i>📋 /help — all commands</i>"
+            reply = reply + "\n\n<i>📋 /help  ·  📲 /share</i>"
         send_message(reply, chat_id=chat_id)
     return reply
 
@@ -1604,11 +1604,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n<b>My Trades</b>"
             "\n/bought  ·  /sold  ·  /cancel"
             "\n/positions  ·  /history\n"
-            "\n<b>Budgets</b>"
-            "\n/set_st  ·  /set_lt"
-            "\n/set_cst  ·  /set_clt\n"
             "\n<b>Intelligence</b>"
-            "\n/set_risk  ·  /mode  ·  /set_budget"
+            "\n/set_budget  ·  /set_risk  ·  /mode"
             "\n/watch  ·  /exclude  ·  /watchlist\n"
             "\n<b>Market</b>"
             "\n/regime  ·  /backtest\n"

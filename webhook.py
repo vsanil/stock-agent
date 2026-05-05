@@ -30,6 +30,8 @@ def webhook():
     callback_query = data.get("callback_query")
     if callback_query:
         cq_chat_id = str(callback_query.get("message", {}).get("chat", {}).get("id", ""))
+        if cq_chat_id and cq_chat_id not in get_allowed_users():
+            return jsonify({"status": "ok", "access": "denied"}), 200
         with typing_until_done(cq_chat_id or None):
             handle_callback_query(callback_query)
         return jsonify({"status": "ok", "type": "callback_query"}), 200
