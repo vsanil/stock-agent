@@ -69,15 +69,16 @@ def format_daily_message(picks: dict, config: dict) -> str:
     per_stock  = round(float(stock_budget)  / max(max_stock_picks,  1), 2) if stock_budget  else None
     per_crypto = round(float(crypto_budget) / max(max_crypto_picks, 1), 2) if crypto_budget else None
 
-    show_st = pick_mode in ("st", "both")
-    show_lt = pick_mode in ("lt", "both")
+    show_st     = pick_mode in ("st", "both")
+    show_lt     = pick_mode in ("lt", "both")
+    show_crypto = config.get("show_crypto", True)   # per-user crypto on/off
 
     stocks    = picks.get("stocks", picks)
     crypto    = picks.get("crypto", {})
     st_picks  = stocks.get("short_term", []) if show_st else []
     lt_picks  = stocks.get("long_term", [])  if show_lt else []
-    cst_picks = crypto.get("short_term", []) if show_st else []
-    clt_picks = crypto.get("long_term", [])  if show_lt else []
+    cst_picks = crypto.get("short_term", []) if (show_st and show_crypto) else []
+    clt_picks = crypto.get("long_term", [])  if (show_lt and show_crypto) else []
 
     # Apply per-user pick caps
     max_s = config.get("max_stock_picks")

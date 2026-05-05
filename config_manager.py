@@ -36,6 +36,7 @@ DEFAULT_USER_CONFIG = {
     "max_crypto_picks":  None,         # cap total crypto picks shown (None = use global defaults)
     "stop_loss_pct":     None,         # % below entry to auto-close (None = use global default of 7%)
     "target_gain_pct":   None,         # % above entry as default target (None = use global default of 15%)
+    "show_crypto":       True,         # False = hide all crypto sections from daily picks
 }
 
 GIST_FILENAME          = "config.json"

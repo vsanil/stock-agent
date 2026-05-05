@@ -876,6 +876,12 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command == "users":
         return _parse_and_execute("USERS", original="/users", chat_id=chat_id)
 
+    if command == "broadcast":
+        return _parse_and_execute(f"BROADCAST {text}", original=f"/broadcast {text}", chat_id=chat_id)
+
+    if command == "release":
+        return _parse_and_execute(f"RELEASE {text}", original=f"/release {text}", chat_id=chat_id)
+
     return _handle_natural_language(text)
 
 
@@ -1345,7 +1351,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n<b>Intelligence</b>"
             "\n/set_budget  ·  /set_risk  ·  /mode"
             "\n/set_picks  ·  /set_thresholds"
-            "\n/watch  ·  /exclude\n"
+            "\n/watch  ·  /exclude"
+            "\n/crypto  <i>(on/off — hide crypto from your picks)</i>\n"
             "\n<b>Market</b>"
             "\n/regime  ·  /backtest\n"
             "\n<b>Price Alerts</b>"
@@ -1356,11 +1363,13 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/paper_reset  ·  /paper_add_cash\n"
             "\n<b>Control</b>"
             "\n/pause  ·  /resume  ·  /status  ·  /settings"
-            "\n/reset  ·  /help  ·  /share  <i>(invite link)</i>"
-            "\n/users  ·  /adduser  ·  /removeuser  <i>(admin)</i>"
-            "\n/admin_perf  <i>(admin — all-user performance)</i>"
-            "\n/bot_pause  ·  /bot_resume  <i>(admin — global kill switch)</i>"
-            "\n/bot_crypto_on  ·  /bot_crypto_off  <i>(admin — crypto toggle)</i>"
+            "\n/reset  ·  /help  ·  /share  <i>(invite link)</i>\n"
+            "\n<b>Admin</b>"
+            "\n/users  ·  /adduser  ·  /removeuser"
+            "\n/broadcast  ·  /release  <i>(send updates to all users)</i>"
+            "\n/admin_perf  <i>(all-user performance)</i>"
+            "\n/bot_pause  ·  /bot_resume  <i>(global kill switch)</i>"
+            "\n/bot_crypto_on  ·  /bot_crypto_off  <i>(global crypto toggle)</i>"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -1470,13 +1479,13 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 timeout=5,
             ).json()
             username = resp.get("result", {}).get("username", "")
-            bot_link = f"https://t.me/{username}" if username else "https://t.me/yourbotname"
+            bot_link = f"https://t.me/{username}" if username else "https://t.me/StockwiseBot"
         except Exception:
-            bot_link = "https://t.me/yourbotname"
+            bot_link = "https://t.me/StockwiseBot"
 
         return (
-            f"📲 <b>Share this with friends:</b>\n\n"
-            f"Hey! I'm using a personal AI stock advisor bot — it sends daily stock &amp; crypto picks, "
+            f"📲 <b>Share Stockwise with friends:</b>\n\n"
+            f"Hey! I'm using Stockwise — a personal AI stock advisor bot that sends daily stock &amp; crypto picks, "
             f"price alerts, and weekly performance recaps.\n\n"
             f"Join here 👇\n"
             f"{bot_link}\n\n"
@@ -1595,6 +1604,62 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             return "🔒 Admin only."
         update_config("crypto_enabled", False)
         return "⏸ <b>Crypto picks disabled.</b> No crypto analysis will run tomorrow morning."
+
+    # ── /crypto on|off (per-user crypto visibility toggle) ───────────────────
+    if text in ("CRYPTO ON", "CRYPTO OFF", "CRYPTO"):
+        if text == "CRYPTO ON":
+            update_user_config(chat_id, "show_crypto", True)
+            return "✅ <b>Crypto picks enabled</b> for your account. You'll see them in tomorrow's briefing."
+        if text == "CRYPTO OFF":
+            update_user_config(chat_id, "show_crypto", False)
+            return "⏸ <b>Crypto picks hidden</b> for your account. Stock picks are unaffected.\n<i>To re-enable: /crypto on</i>"
+        # /crypto alone → show current state
+        user_cfg = get_user_config(chat_id)
+        state    = "✅ on" if user_cfg.get("show_crypto", True) else "⏸ off"
+        return f"🪙 <b>Crypto picks:</b> {state}\n\n/crypto on  ·  /crypto off"
+
+    # ── /broadcast (admin — send a message to all users) ─────────────────────
+    if text == "BROADCAST" or text.startswith("BROADCAST "):
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        if text == "BROADCAST":
+            _prompt_for_param("broadcast", chat_id)
+            return ""
+        body = text[len("BROADCAST "):].strip()
+        if not body:
+            return "Usage: /broadcast Your message here"
+        from config_manager import get_allowed_users
+        recipients = [u for u in get_allowed_users() if u != chat_id]
+        msg = f"📢 <b>Stockwise Update</b>\n\n{_esc(body)}"
+        sent = 0
+        for uid in recipients:
+            if send_message(msg, chat_id=uid):
+                sent += 1
+        return f"✅ Broadcast sent to {sent} user(s)."
+
+    # ── /release (admin — versioned release note to all users) ───────────────
+    if text == "RELEASE" or text.startswith("RELEASE "):
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        if text == "RELEASE":
+            _prompt_for_param("release", chat_id)
+            return ""
+        notes = text[len("RELEASE "):].strip()
+        if not notes:
+            return "Usage: /release What's new in this update"
+        from datetime import date as _date
+        today = _date.today().strftime("%b %d, %Y")
+        msg = (
+            f"🚀 <b>Stockwise — What's New</b>  <i>({today})</i>\n\n"
+            f"{_esc(notes)}\n\n"
+            f"<i>Questions? Just ask the bot.</i>"
+        )
+        from config_manager import get_allowed_users
+        sent = 0
+        for uid in get_allowed_users():
+            if send_message(msg, chat_id=uid):
+                sent += 1
+        return f"✅ Release note sent to {sent} user(s)."
 
     # ── /set_thresholds (per-user stop loss & target gain) ────────────────────
     if text == "SET THRESHOLDS":
