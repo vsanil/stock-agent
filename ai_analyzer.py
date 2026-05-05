@@ -300,6 +300,7 @@ def _build_user_prompt(
     config: dict,
     recent_losers: list[str] | None = None,
     regime_info: dict | None = None,
+    pick_mode: str = "both",
 ) -> str:
     # Pre-build conditional blocks (backslashes not allowed inside f-string expressions)
     if recent_losers:
@@ -341,12 +342,27 @@ def _build_user_prompt(
     else:
         regime_block = ""
 
-    return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
+    # Mode-specific instruction prefix
+    show_st = pick_mode in ("st", "both")
+    show_lt = pick_mode in ("lt", "both")
+    mode_note = {
+        "st":   "USER MODE: SHORT TERM ONLY. Generate ONLY short_term picks for stocks and crypto. Return empty arrays [] for all long_term sections.",
+        "lt":   "USER MODE: LONG TERM ONLY. Generate ONLY long_term picks for stocks and crypto. Return empty arrays [] for all short_term sections.",
+        "both": "",
+    }.get(pick_mode, "")
 
+    stocks_block = ""
+    if show_st:
+        stocks_block += f"  Short-term budget: ${config.get('short_term_budget', 25)} (target gains within 1-4 weeks)\n"
+        stocks_block += f"  Keep best {config.get('max_short_picks', 2)} short-term stocks.\n"
+    if show_lt:
+        stocks_block += f"  Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)\n"
+        stocks_block += f"  Keep best {config.get('max_long_picks', 3)} long-term stocks.\n"
+
+    return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
+{f"{mode_note}" + chr(10) if mode_note else ""}
 STOCKS:
-  Short-term budget: ${config.get('short_term_budget', 25)} (target gains within 1-4 weeks)
-  Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)
-  Keep best {config.get('max_short_picks', 2)} short-term stocks and best {config.get('max_long_picks', 3)} long-term stocks.
+{stocks_block}
 
 ALLOCATION RULE (STRICTLY ENFORCE):
   - Divide each budget EQUALLY among all picks in that category. Do NOT weight by conviction.
@@ -385,9 +401,8 @@ LONG-TERM TARGET PRICE RULES (STRICTLY ENFORCE):
     of ATH distance or past performance. Do NOT set crypto LT targets implying 100-200%+ gains.
 
 CRYPTO:
-  Short-term crypto budget: ${config.get('crypto_short_budget', 20)} (target gains within 1-2 weeks, high risk)
-  Long-term crypto budget:  ${config.get('crypto_long_budget', 30)} (hold 6-24 months)
-  Keep best {config.get('max_crypto_short_picks', 2)} short-term crypto and best {config.get('max_crypto_long_picks', 2)} long-term crypto.
+{"  Short-term crypto budget: $" + str(config.get('crypto_short_budget', 20)) + " (target gains within 1-2 weeks, high risk)" + chr(10) + "  Keep best " + str(config.get('max_crypto_short_picks', 2)) + " short-term crypto." if show_st else ""}
+{"  Long-term crypto budget:  $" + str(config.get('crypto_long_budget', 30)) + " (hold 6-24 months)" + chr(10) + "  Keep best " + str(config.get('max_crypto_long_picks', 2)) + " long-term crypto." if show_lt else ""}
 
 CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
   - Each crypto symbol may appear in AT MOST ONE category (short_term OR long_term, NEVER both).
@@ -531,6 +546,7 @@ def analyze_with_claude(
         stock_candidates, crypto_candidates, config,
         recent_losers=recent_losers or [],
         regime_info=regime_info,
+        pick_mode=config.get("pick_mode", "both"),
     )
 
     # Sonnet for main analysis — quality matters for picks

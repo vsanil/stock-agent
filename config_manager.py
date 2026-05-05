@@ -27,6 +27,8 @@ DEFAULT_CONFIG = {
     "risk_profile": "moderate",       # conservative | moderate | aggressive
     "excluded_sectors": [],            # e.g. ["Energy", "Utilities"]
     "watchlist": [],                   # e.g. ["NVDA", "TSLA", "BRK-B"] — always evaluated
+    # Pick mode: which sections appear in daily message
+    "pick_mode": "both",              # "st" | "lt" | "both"
 }
 
 GIST_FILENAME          = "config.json"

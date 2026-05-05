@@ -13,7 +13,7 @@ import requests
 from flask import Flask, request, jsonify
 
 from config_manager import get_config
-from telegram_notifier import handle_incoming_command, handle_callback_query, set_webhook
+from telegram_notifier import handle_incoming_command, handle_callback_query, set_webhook, send_typing_action, typing_until_done
 
 app = Flask(__name__)
 
@@ -29,7 +29,9 @@ def webhook():
     # ── Inline keyboard button tap ────────────────────────────────────────────
     callback_query = data.get("callback_query")
     if callback_query:
-        handle_callback_query(callback_query)
+        cq_chat_id = str(callback_query.get("message", {}).get("chat", {}).get("id", ""))
+        with typing_until_done(cq_chat_id or None):
+            handle_callback_query(callback_query)
         return jsonify({"status": "ok", "type": "callback_query"}), 200
 
     # ── Regular message ───────────────────────────────────────────────────────
@@ -44,7 +46,8 @@ def webhook():
         return jsonify({"status": "ignored", "reason": "empty text or chat_id"}), 200
 
     print(f"[webhook] Received from {chat_id}: {text!r}")
-    reply = handle_incoming_command(text, chat_id=chat_id)
+    with typing_until_done(chat_id):
+        reply = handle_incoming_command(text, chat_id=chat_id)
     if reply:
         pass   # handle_incoming_command already sent via send_message for inline flows
     return jsonify({"status": "ok", "reply": reply}), 200

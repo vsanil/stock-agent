@@ -20,6 +20,15 @@ def _esc(text) -> str:
     """HTML-escape dynamic content so <, >, & don't break Telegram's parser."""
     return html.escape(str(text)) if text else ""
 
+
+def _is_number(s: str) -> bool:
+    """Return True if s looks like a numeric value (int or float, optional commas)."""
+    try:
+        float(s.replace(",", ""))
+        return True
+    except (ValueError, AttributeError):
+        return False
+
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_MESSAGE_LENGTH = 4096   # Telegram limit (much larger than WhatsApp)
 MAX_RETRIES = 3
@@ -114,6 +123,50 @@ def send_inline_keyboard(text: str, buttons: list[list[dict]],
         return False
 
 
+def send_typing_action(chat_id: str | None = None) -> None:
+    """Send a single 'typing...' action (lasts ~5 s in Telegram UI). Fire-and-forget."""
+    token   = _bot_token()
+    chat_id = chat_id or _chat_id()
+    url     = TELEGRAM_API.format(token=token, method="sendChatAction")
+    try:
+        requests.post(url, json={"chat_id": chat_id, "action": "typing"}, timeout=5)
+    except Exception:
+        pass
+
+
+def typing_until_done(chat_id: str | None = None):
+    """
+    Context manager that keeps the 'typing...' indicator alive for the duration of a block.
+
+    Telegram's typing action only lasts ~5 s, so we re-fire it every 4 s in a background
+    thread. The indicator disappears automatically once the context exits and the reply lands.
+
+    Usage:
+        with typing_until_done(chat_id):
+            reply = slow_operation()
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        resolved_chat_id = chat_id or _chat_id()
+        stop = threading.Event()
+
+        def _keep_typing():
+            while not stop.is_set():
+                send_typing_action(resolved_chat_id)
+                stop.wait(4)   # re-fire every 4 s (Telegram clears it after 5 s)
+
+        t = threading.Thread(target=_keep_typing, daemon=True)
+        t.start()
+        try:
+            yield
+        finally:
+            stop.set()
+
+    return _ctx()
+
+
 def answer_callback_query(callback_query_id: str, text: str = "") -> None:
     """Acknowledge a Telegram callback query (dismisses the loading spinner)."""
     token = _bot_token()
@@ -186,13 +239,17 @@ def format_daily_message(picks: dict, config: dict) -> str:
     long_budget      = config.get("long_term_budget", 50)
     crypto_st_budget = config.get("crypto_short_budget", 20)
     crypto_lt_budget = config.get("crypto_long_budget", 30)
+    pick_mode        = config.get("pick_mode", "both")   # "st" | "lt" | "both"
+
+    show_st = pick_mode in ("st", "both")
+    show_lt = pick_mode in ("lt", "both")
 
     stocks    = picks.get("stocks", picks)
     crypto    = picks.get("crypto", {})
-    st_picks  = stocks.get("short_term", [])
-    lt_picks  = stocks.get("long_term", [])
-    cst_picks = crypto.get("short_term", [])
-    clt_picks = crypto.get("long_term", [])
+    st_picks  = stocks.get("short_term", []) if show_st else []
+    lt_picks  = stocks.get("long_term", [])  if show_lt else []
+    cst_picks = crypto.get("short_term", []) if show_st else []
+    clt_picks = crypto.get("long_term", [])  if show_lt else []
 
     # ── Macro context line ────────────────────────────────────────────────────
     macro_parts = []
@@ -733,11 +790,15 @@ def handle_callback_query(callback_query: dict) -> None:
 
         if action == "cancel_auto":
             log        = load_trade_log()
-            has_open   = any(t["ticker"] == ticker for t in log.get("open", []))
-            has_closed = any(t["ticker"] == ticker for t in log.get("closed", []))
-            if has_open and has_closed:
+            open_trade   = next((t for t in log.get("open",   []) if t["ticker"] == ticker), None)
+            closed_trade = next((t for t in reversed(log.get("closed", [])) if t["ticker"] == ticker), None)
+
+            if open_trade and closed_trade:
+                # Both exist — ask which one to undo
                 send_inline_keyboard(
-                    f"↩️ What do you want to undo for <b>{ticker}</b>?",
+                    f"↩️ What do you want to undo for <b>{ticker}</b>?\n\n"
+                    f"Open:   bought <code>${open_trade.get('entry_price')}</code>  · {open_trade.get('opened_date')}\n"
+                    f"Closed: sold <code>${closed_trade.get('closed_price')}</code>  · {closed_trade.get('closed_date')}",
                     [[
                         {"text": "❌ Undo buy",  "callback_data": f"confirm_cancel|{ticker}"},
                         {"text": "↩️ Undo sell", "callback_data": f"confirm_reopen|{ticker}"},
@@ -745,10 +806,38 @@ def handle_callback_query(callback_query: dict) -> None:
                     chat_id=chat_id,
                 )
                 return
-            if has_open:
-                action = "confirm_cancel"
-            elif has_closed:
-                action = "confirm_reopen"
+
+            if open_trade:
+                # Confirm before removing the open buy
+                send_inline_keyboard(
+                    f"⚠️ <b>Undo this buy?</b>\n\n"
+                    f"<b>{ticker}</b>  bought at <code>${open_trade.get('entry_price')}</code>  "
+                    f"· {open_trade.get('opened_date')}\n"
+                    f"<i>This will remove it from your open positions.</i>",
+                    [[
+                        {"text": "✅ Yes, undo buy", "callback_data": f"confirm_cancel|{ticker}"},
+                        {"text": "❌ No, keep it",   "callback_data": "cancel_abort"},
+                    ]],
+                    chat_id=chat_id,
+                )
+                return
+
+            if closed_trade:
+                # Confirm before reopening the closed sell
+                ret  = closed_trade.get("return_pct", 0)
+                sign = "+" if ret >= 0 else ""
+                send_inline_keyboard(
+                    f"⚠️ <b>Undo this sell?</b>\n\n"
+                    f"<b>{ticker}</b>  sold at <code>${closed_trade.get('closed_price')}</code>  "
+                    f"{sign}{ret}%  · {closed_trade.get('closed_date')}\n"
+                    f"<i>This will reopen the position as if the sale never happened.</i>",
+                    [[
+                        {"text": "✅ Yes, undo sell", "callback_data": f"confirm_reopen|{ticker}"},
+                        {"text": "❌ No, keep it",    "callback_data": "cancel_abort"},
+                    ]],
+                    chat_id=chat_id,
+                )
+                return
 
     elif action == "sell":
         ticker    = parts[1] if len(parts) > 1 else ""
@@ -1005,6 +1094,9 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
         return _execute_sold(ticker, price_raw, chat_id)
 
     # ── Single-step param commands ────────────────────────────────────────────
+    if command == "history":
+        return _parse_and_execute("HISTORY", original="/history", chat_id=chat_id)
+
     if command == "cancel":
         return _parse_and_execute(f"CANCEL {text}", original=f"/cancel {text}", chat_id=chat_id)
 
@@ -1149,6 +1241,68 @@ Rules:
     return _explain_pick(query)
 
 
+def _nl_parse_trade(command: str, raw: str) -> dict:
+    """
+    Use Haiku to extract structured fields from a natural-language trade/alert param string.
+
+    command: "bought" | "sold" | "alert" | "unalert" | "paper_buy" | "paper_sell"
+    raw:     everything after the slash-command, e.g. "10 apple stocks for 182.5 dollars"
+
+    Returns a dict with extracted fields (None for missing optional ones).
+    Always returns at minimum {"ticker": None} so callers can check for missing fields.
+
+    Examples:
+      bought  "10 apple stocks today for $182.50"
+              → {"ticker": "AAPL", "price": 182.50, "shares": 10}
+      alert   "when nvidia drops below 800"
+              → {"ticker": "NVDA", "price": 800.0, "direction": "below"}
+      paper_buy "buy 5 shares of tesla"
+              → {"ticker": "TSLA", "shares": 5, "price": None}
+    """
+    import anthropic as _anthropic
+    import json as _json
+
+    schemas = {
+        "bought":    '{"ticker": "AAPL or null", "price": 182.50, "shares": 10}  — shares is optional',
+        "sold":      '{"ticker": "AAPL or null", "price": 197.10, "shares": null}  — price is optional',
+        "alert":     '{"ticker": "NVDA or null", "price": 800.0, "direction": "above|below|auto"}',
+        "unalert":   '{"ticker": "NVDA or null"}',
+        "paper_buy": '{"ticker": "AAPL or null", "shares": 10, "price": null}  — price is optional',
+        "paper_sell":'{"ticker": "AAPL or null", "shares": null, "price": null}  — both optional',
+    }
+    schema = schemas.get(command, '{"ticker": null}')
+
+    SYSTEM = f"""You are a field extractor for a stock trading bot command.
+The user sent a /{command} command with a natural-language parameter.
+Extract the required fields and return ONLY valid JSON — no text before or after.
+
+Target schema: {schema}
+
+Rules:
+- ticker: resolve company names to uppercase ticker symbols (Apple→AAPL, Nvidia→NVDA, Tesla→TSLA, etc.)
+  If you cannot confidently identify the ticker, return null.
+- price: extract any dollar amount mentioned. Strip "$", "dollars", "USD". Return as float or null.
+- shares: extract share count or quantity. Words like "10 shares", "10 stocks", "10 units" → 10. Return as float or null.
+- direction: "below"/"under"/"drops below"/"falls to" → "below". "above"/"over"/"crosses"/"hits"/"reaches" → "above". Default → "auto".
+- If a field is not mentioned, return null (do not guess).
+- Return ONLY the JSON object, nothing else."""
+
+    try:
+        client  = _anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            system=SYSTEM,
+            messages=[{"role": "user", "content": raw}],
+        )
+        result = _json.loads(message.content[0].text.strip())
+        print(f"[telegram] NL trade parse ({command}): {result}")
+        return result
+    except Exception as exc:
+        print(f"[telegram] NL trade parse failed ({exc})")
+        return {"ticker": None}
+
+
 def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None) -> str:
     """Parse command string and return reply."""
     chat_id = chat_id or _chat_id()
@@ -1251,19 +1405,29 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text.startswith("ALERT "):
         from price_alert_manager import add_alert
-        parts = text[6:].strip().split()
-        # Formats: ALERT NVDA 1000  |  ALERT NVDA ABOVE 1000  |  ALERT NVDA BELOW 900
+        raw   = text[6:].strip()
+        parts = raw.split()
+        # Try strict parse first: ALERT NVDA 1000  |  ALERT NVDA ABOVE/BELOW 1000
+        ticker, price_str, direction = None, None, "auto"
         try:
             if len(parts) >= 3 and parts[1].upper() in ("ABOVE", "BELOW"):
-                ticker, direction, price_str = parts[0], parts[1].lower(), parts[2]
-            elif len(parts) >= 2:
-                ticker, price_str = parts[0], parts[1]
-                direction = "auto"
+                ticker, direction, price_str = parts[0].upper(), parts[1].lower(), parts[2]
+            elif len(parts) == 2 and _is_number(parts[1]):
+                ticker, price_str = parts[0].upper(), parts[1]
             else:
-                return "⚠️ Usage: /alert NVDA 1000  or  /alert NVDA below 900"
+                raise ValueError("needs NL parse")
             return add_alert(chat_id, ticker, float(price_str.replace(",", "")), direction)
-        except ValueError:
-            return "⚠️ Usage: /alert NVDA 1000  or  /alert NVDA below 900"
+        except (ValueError, IndexError):
+            # Fall back to Haiku NL parse
+            parsed    = _nl_parse_trade("alert", raw)
+            ticker    = parsed.get("ticker")
+            price_val = parsed.get("price")
+            direction = parsed.get("direction") or "auto"
+            if not ticker:
+                return "🤔 I couldn't identify the stock. Try: /alert NVDA below 800 or /alert Apple when it hits $200"
+            if price_val is None:
+                return f"🤔 Got <b>{ticker}</b> but what price should I alert you at?"
+            return add_alert(chat_id, ticker, float(price_val), direction)
 
     if text == "UNALERT":
         _prompt_for_param("unalert", chat_id)
@@ -1271,11 +1435,19 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text.startswith("UNALERT "):
         from price_alert_manager import remove_alert
-        parts = text[8:].strip().split()
-        ticker = parts[0] if parts else ""
-        price  = float(parts[1]) if len(parts) >= 2 else None
+        raw   = text[8:].strip()
+        parts = raw.split()
+        # Strict: UNALERT NVDA  |  UNALERT NVDA 1000
+        if parts and len(parts[0]) <= 5 and parts[0].isalpha():
+            ticker = parts[0].upper()
+            price  = float(parts[1]) if len(parts) >= 2 and _is_number(parts[1]) else None
+        else:
+            # NL parse: "remove nvidia alert" / "stop alerting me about apple"
+            parsed = _nl_parse_trade("unalert", raw)
+            ticker = parsed.get("ticker")
+            price  = parsed.get("price")
         if not ticker:
-            return "⚠️ Usage: /unalert NVDA  or  /unalert NVDA 1000"
+            return "🤔 Which stock's alert should I remove? Try: /unalert NVDA or /unalert Apple"
         return remove_alert(chat_id, ticker, price)
 
     # ── Paper trading ─────────────────────────────────────────────────────────
@@ -1285,19 +1457,27 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text.startswith("PAPER BUY "):
         from paper_trader import paper_buy
-        parts = text[10:].strip().split()
-        # Formats: PAPER BUY AAPL 10  |  PAPER BUY AAPL 182.50 10
+        raw   = text[10:].strip()
+        parts = raw.split()
+        ticker, shares, price = None, None, None
+        # Strict parse: AAPL 10  |  AAPL 182.50 10
         try:
-            if len(parts) == 2:
-                ticker, shares = parts[0], float(parts[1])
-                return paper_buy(ticker, shares)
-            elif len(parts) == 3:
-                ticker, price, shares = parts[0], float(parts[1]), float(parts[2])
-                return paper_buy(ticker, shares, price)
+            if len(parts) == 2 and _is_number(parts[1]):
+                ticker, shares = parts[0].upper(), float(parts[1])
+            elif len(parts) == 3 and _is_number(parts[1]) and _is_number(parts[2]):
+                ticker, price, shares = parts[0].upper(), float(parts[1]), float(parts[2])
             else:
-                return "⚠️ Usage: /paper_buy AAPL 10  or  /paper_buy AAPL 182.50 10"
-        except ValueError:
-            return "⚠️ Usage: /paper_buy AAPL 10  or  /paper_buy AAPL 182.50 10"
+                raise ValueError("needs NL parse")
+        except (ValueError, IndexError):
+            parsed = _nl_parse_trade("paper_buy", raw)
+            ticker = parsed.get("ticker")
+            shares = parsed.get("shares")
+            price  = parsed.get("price")
+        if not ticker:
+            return "🤔 Which stock? Try: /paper_buy Apple 10 or /paper_buy 5 shares of Tesla"
+        if not shares:
+            return f"🤔 How many shares of <b>{ticker}</b> to simulate buying?"
+        return paper_buy(ticker, shares, price)
 
     if text in ("PAPER SELL",):
         _prompt_for_param("paper_sell", chat_id)
@@ -1305,16 +1485,25 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text.startswith("PAPER SELL "):
         from paper_trader import paper_sell
-        parts = text[11:].strip().split()
+        raw   = text[11:].strip()
+        parts = raw.split()
+        ticker, shares, price = None, None, None
+        # Strict parse: AAPL  |  AAPL 5  |  AAPL 197.10 5
         try:
-            ticker = parts[0] if parts else ""
-            if not ticker:
-                return "⚠️ Usage: /paper_sell AAPL  or  /paper_sell AAPL 5"
-            shares = float(parts[1]) if len(parts) >= 2 else None
-            price  = float(parts[2]) if len(parts) >= 3 else None
-            return paper_sell(ticker, shares, price)
-        except ValueError:
-            return "⚠️ Usage: /paper_sell AAPL  or  /paper_sell AAPL 5"
+            if parts and len(parts[0]) <= 5 and parts[0].isalpha():
+                ticker = parts[0].upper()
+                shares = float(parts[1]) if len(parts) >= 2 and _is_number(parts[1]) else None
+                price  = float(parts[2]) if len(parts) >= 3 and _is_number(parts[2]) else None
+            else:
+                raise ValueError("needs NL parse")
+        except (ValueError, IndexError):
+            parsed = _nl_parse_trade("paper_sell", raw)
+            ticker = parsed.get("ticker")
+            shares = parsed.get("shares")
+            price  = parsed.get("price")
+        if not ticker:
+            return "🤔 Which stock to simulate selling? Try: /paper_sell Apple or /paper_sell AAPL 5 shares"
+        return paper_sell(ticker, shares, price)
 
     if text == "PAPER PORTFOLIO":
         from paper_trader import paper_portfolio
@@ -1352,50 +1541,52 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         return (
             "📋 <b>Available commands:</b>\n"
             "\n<b>— Daily —</b>\n"
-            "/today                    — re-send today's picks\n"
-            "/prices                   — live prices for today's picks\n"
-            "/perf                     — all-time performance stats\n"
-            "/explain &lt;question&gt;       — ask anything about a pick\n"
-            "  e.g. /explain microsoft\n"
-            "  e.g. /explain why is doge picked\n"
-            "\n<b>— My Trades —</b>\n"
-            "/bought AAPL 182.50       — log a purchase\n"
-            "/bought AAPL 182.50 5     — with share count\n"
-            "/sold AAPL 197.10         — log a sale + see P&amp;L\n"
-            "/positions                — live P&amp;L on all open trades\n"
-            "/cancel apple             — undo accidental /bought or /sold\n"
-            "\n<b>— Budgets —</b>\n"
-            "/set_st &lt;n&gt;               — stock short-term budget\n"
-            "/set_lt &lt;n&gt;               — stock long-term budget\n"
-            "/set_cst &lt;n&gt;              — crypto short-term budget\n"
-            "/set_clt &lt;n&gt;              — crypto long-term budget\n"
-            "\n<b>— AI Intelligence —</b>\n"
-            "/set_risk &lt;profile&gt;       — conservative | moderate | aggressive\n"
-            "/watch NVDA TSLA          — always evaluate these tickers\n"
-            "/watch none               — clear watchlist\n"
-            "/exclude energy utils     — never pick from these sectors\n"
-            "/exclude none             — clear sector exclusions\n"
-            "/watchlist                — show AI settings summary\n"
-            "\n<b>— Market Intelligence —</b>\n"
-            "/regime                   — current market regime (bull/bear/volatile)\n"
-            "/backtest                 — historical strategy backtest\n"
-            "\n<b>— Price Alerts —</b>\n"
-            "/alert NVDA 1000          — notify when NVDA crosses $1000\n"
-            "/alert NVDA below 900     — notify when NVDA drops below $900\n"
-            "/alerts                   — list all active alerts\n"
-            "/unalert NVDA             — remove NVDA alerts\n"
-            "\n<b>— Paper Trading —</b>\n"
-            "/paper_buy AAPL 10        — simulate buying 10 shares of AAPL\n"
-            "/paper_sell AAPL          — simulate selling AAPL position\n"
-            "/paper_portfolio          — paper P&amp;L summary\n"
-            "/paper_perf               — paper trading win rate\n"
-            "/paper_reset              — reset paper portfolio to $10k\n"
-            "\n<b>— Control —</b>\n"
-            "/pause                    — stop daily picks\n"
-            "/resume                   — restart daily picks\n"
-            "/status                   — show full config\n"
-            "/reset                    — restore default config\n"
-            "/help                     — show this list"
+            "\n/today      — re-send today's picks"
+            "\n/prices     — live prices for today's picks"
+            "\n/perf       — all-time performance stats"
+            "\n/explain &lt;question&gt; — ask anything about a pick"
+            "\n  e.g. /explain microsoft"
+            "\n  e.g. /explain why is doge picked"
+            "\n\n<b>— My Trades —</b>\n"
+            "\n/bought AAPL 182.50     — log a purchase"
+            "\n/bought AAPL 182.50 5   — with share count"
+            "\n/sold AAPL 197.10       — log a sale + see P&amp;L"
+            "\n/positions              — live P&amp;L on open trades"
+            "\n/history                — date-wise buy/sell transaction log"
+            "\n/cancel                 — tap a recent trade to undo it"
+            "\n\n<b>— Budgets —</b>\n"
+            "\n/set_st &lt;n&gt;    — stock short-term budget"
+            "\n/set_lt &lt;n&gt;    — stock long-term budget"
+            "\n/set_cst &lt;n&gt;   — crypto short-term budget"
+            "\n/set_clt &lt;n&gt;   — crypto long-term budget"
+            "\n\n<b>— Intelligence —</b>\n"
+            "\n/set_risk &lt;profile&gt;  — conservative | moderate | aggressive"
+            "\n/mode st|lt|both     — show short-term, long-term, or both"
+            "\n/watch NVDA TSLA     — always evaluate these tickers"
+            "\n/watch none          — clear watchlist"
+            "\n/exclude energy      — never pick from these sectors"
+            "\n/exclude none        — clear sector exclusions"
+            "\n/watchlist           — show intelligence settings"
+            "\n\n<b>— Market —</b>\n"
+            "\n/regime    — current market regime (bull/bear/volatile)"
+            "\n/backtest  — historical strategy backtest"
+            "\n\n<b>— Price Alerts —</b>\n"
+            "\n/alert NVDA 1000        — notify when NVDA crosses $1000"
+            "\n/alert NVDA below 900   — notify when NVDA drops below $900"
+            "\n/alerts                 — list all active alerts"
+            "\n/unalert NVDA           — remove NVDA alerts"
+            "\n\n<b>— Paper Trading —</b>\n"
+            "\n/paper_buy AAPL 10   — simulate buying 10 shares"
+            "\n/paper_sell AAPL     — simulate selling position"
+            "\n/paper_portfolio     — paper P&amp;L summary"
+            "\n/paper_perf          — paper trading win rate"
+            "\n/paper_reset         — reset paper portfolio to $10k"
+            "\n\n<b>— Control —</b>\n"
+            "\n/pause   — stop daily picks"
+            "\n/resume  — restart daily picks"
+            "\n/status  — show full config"
+            "\n/reset   — restore default config"
+            "\n/help    — show this list"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -1415,6 +1606,36 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "aggressive":   "More picks, wider stops, all sectors, full crypto allocation.",
         }
         return f"✅ Risk profile → <b>{profile}</b>\n<i>{descriptions[profile]}</i>\nTakes effect tomorrow."
+
+    # /mode st | /mode lt | /mode both — choose which sections appear in daily picks
+    if text == "MODE":
+        config = get_config()
+        current = config.get("pick_mode", "both")
+        mode_desc = {
+            "st":   "Short Term only (stocks + crypto, fast trades)",
+            "lt":   "Long Term only (stocks + crypto, DCA positions)",
+            "both": "Both short-term and long-term sections",
+        }
+        return (
+            f"📊 <b>Pick Mode</b>\n"
+            f"Current: <b>{current}</b> — {mode_desc.get(current, current)}\n\n"
+            f"To change:\n"
+            f"  /mode st   — short term only\n"
+            f"  /mode lt   — long term only\n"
+            f"  /mode both — show all sections (default)"
+        )
+
+    if text.startswith("MODE "):
+        raw = text[len("MODE "):].strip().lower()
+        if raw not in ("st", "lt", "both"):
+            return "❌ Invalid mode. Use: /mode st, /mode lt, or /mode both"
+        update_config("pick_mode", raw)
+        labels = {
+            "st":   "📈 Short Term only — fast trades (stock + crypto ST sections)",
+            "lt":   "🏦 Long Term only — DCA positions (stock + crypto LT sections)",
+            "both": "📊 Both — all sections shown (default)",
+        }
+        return f"✅ Pick mode → <b>{raw}</b>\n{labels[raw]}\nTakes effect tomorrow."
 
     # /exclude energy stocks  |  /exclude oil companies  |  /exclude none
     if text == "EXCLUDE":
@@ -1472,8 +1693,10 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         wl = config.get("watchlist", [])
         ex = config.get("excluded_sectors", [])
         rp = config.get("risk_profile", "moderate")
-        lines = [f"<b>🎯 AI Settings</b>",
+        pm = config.get("pick_mode", "both")
+        lines = [f"<b>🎯 Intelligence</b>",
                  f"Risk profile: <b>{rp}</b>",
+                 f"Pick mode: <b>{pm}</b>",
                  f"Watchlist: <b>{', '.join(wl) if wl else 'none'}</b>",
                  f"Excluded sectors: <b>{', '.join(ex) if ex else 'none'}</b>"]
         return "\n".join(lines)
@@ -1506,6 +1729,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             f"Crypto ST:        ${config.get('crypto_short_budget', 20)}\n"
             f"Crypto LT:        ${config.get('crypto_long_budget', 30)}\n"
             f"Risk profile:     {config.get('risk_profile', 'moderate')}\n"
+            f"Pick mode:        {config.get('pick_mode', 'both')}\n"
             f"Watchlist:        {', '.join(wl) if wl else 'none'}\n"
             f"Excluded sectors: {', '.join(ex) if ex else 'none'}\n"
             f"Stop loss:        {config.get('stop_loss_pct')}%\n"
@@ -1559,10 +1783,23 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         return ""
 
     if text.startswith("BOUGHT "):
-        parts      = text.split()
-        name_raw   = parts[1]
-        price_raw  = parts[2] if len(parts) >= 3 else None
-        shares_raw = parts[3] if len(parts) >= 4 else None
+        raw    = text[len("BOUGHT "):].strip()
+        parts  = raw.split()
+
+        # Detect natural-language params: more than 3 tokens, or non-numeric second token
+        is_nl = len(parts) > 3 or (len(parts) >= 2 and not _is_number(parts[1]))
+        if is_nl:
+            parsed = _nl_parse_trade("bought", raw)
+            name_raw   = parsed.get("ticker") or (parts[0] if parts else None)
+            price_raw  = str(parsed["price"])  if parsed.get("price")  is not None else None
+            shares_raw = str(parsed["shares"]) if parsed.get("shares") is not None else None
+        else:
+            name_raw   = parts[0] if parts else None
+            price_raw  = parts[1] if len(parts) >= 2 else None
+            shares_raw = parts[2] if len(parts) >= 3 else None
+
+        if not name_raw:
+            return "🤔 I couldn't identify a stock. Try: /bought Apple 182.50 or /bought 10 AAPL shares at $182.50"
 
         candidates = _resolve_ticker_candidates(name_raw)
         if len(candidates) > 1:
@@ -1583,9 +1820,20 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         return ""
 
     if text.startswith("SOLD "):
-        parts     = text.split()
-        name_raw  = parts[1]
-        price_raw = parts[2] if len(parts) >= 3 else None
+        raw   = text[len("SOLD "):].strip()
+        parts = raw.split()
+
+        is_nl = len(parts) > 2 or (len(parts) >= 2 and not _is_number(parts[1]))
+        if is_nl:
+            parsed    = _nl_parse_trade("sold", raw)
+            name_raw  = parsed.get("ticker") or (parts[0] if parts else None)
+            price_raw = str(parsed["price"]) if parsed.get("price") is not None else None
+        else:
+            name_raw  = parts[0] if parts else None
+            price_raw = parts[1] if len(parts) >= 2 else None
+
+        if not name_raw:
+            return "🤔 I couldn't identify a stock. Try: /sold Apple 197.10 or /sold AAPL at $197"
 
         candidates = _resolve_ticker_candidates(name_raw)
         if len(candidates) > 1:
@@ -1599,9 +1847,119 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
         return _execute_sold(candidates[0]["ticker"], price_raw, chat_id)
 
+    # ── /history — date-wise transaction log ─────────────────────────────────
+    if text == "HISTORY":
+        from config_manager import load_trade_log
+
+        log         = load_trade_log()
+        open_trades = log.get("open", [])
+        closed      = log.get("closed", [])
+
+        if not open_trades and not closed:
+            return "📭 No trades yet. Use /bought to log a purchase."
+
+        # Build a unified event list: one entry per buy and one per sell
+        events = []
+        for t in open_trades:
+            events.append({
+                "date":   t.get("opened_date", ""),
+                "ticker": t["ticker"],
+                "action": "BUY",
+                "price":  t.get("entry_price"),
+                "shares": t.get("shares"),
+                "status": "OPEN",
+                "ret":    None,
+            })
+        for t in closed:
+            # Buy event
+            events.append({
+                "date":   t.get("opened_date", ""),
+                "ticker": t["ticker"],
+                "action": "BUY",
+                "price":  t.get("entry_price"),
+                "shares": t.get("shares"),
+                "status": "CLOSED",
+                "ret":    None,
+            })
+            # Sell event
+            outcome_icon = {"target": "🎯", "stop": "🛑", "trailing_stop": "🔒",
+                            "manual": "✋", "expired": "⏰"}.get(t.get("outcome", ""), "✋")
+            ret = t.get("return_pct", 0)
+            events.append({
+                "date":   t.get("closed_date", ""),
+                "ticker": t["ticker"],
+                "action": "SELL",
+                "price":  t.get("closed_price"),
+                "shares": t.get("shares"),
+                "status": outcome_icon,
+                "ret":    ret,
+            })
+
+        # Sort most recent first
+        events.sort(key=lambda e: e["date"], reverse=True)
+
+        # Group by date
+        from itertools import groupby
+        lines = ["📋 <b>Trade History</b>\n"]
+        for day, group in groupby(events, key=lambda e: e["date"]):
+            try:
+                from datetime import date as _date
+                label = _date.fromisoformat(day).strftime("%a %b %d, %Y")
+            except Exception:
+                label = day
+            lines.append(f"\n<b>{label}</b>")
+            for e in group:
+                price_str  = f"${_p(e['price'])}" if e["price"] else "—"
+                shares_str = f" × {_p(e['shares'])}" if e.get("shares") else ""
+                ret_str    = ""
+                if e["ret"] is not None:
+                    sign = "+" if e["ret"] >= 0 else ""
+                    ret_str = f"  <i>{sign}{e['ret']}%</i>"
+                action_icon = "🟢" if e["action"] == "BUY" else "🔴"
+                lines.append(
+                    f"  {action_icon} <b>{e['ticker']}</b> {e['action']}  "
+                    f"<code>{price_str}{shares_str}</code>  "
+                    f"{e['status']}{ret_str}"
+                )
+
+        return "\n".join(lines)
+
     # ── /cancel — undo accidental /bought or /sold ───────────────────────────
     if text == "CANCEL":
-        _prompt_for_param("cancel", chat_id)
+        # Show recent transactions as tappable buttons instead of prompting for ticker
+        from config_manager import load_trade_log
+
+        log         = load_trade_log()
+        open_trades = log.get("open", [])
+        closed      = log.get("closed", [])
+
+        if not open_trades and not closed:
+            return "📭 No trades to cancel."
+
+        # Build button list: all open buys + last 5 closed sells, sorted by date
+        buttons = []
+        for t in sorted(open_trades, key=lambda x: x.get("opened_date", ""), reverse=True):
+            label = (f"🟢 BUY  {t['ticker']}  ${_p(t.get('entry_price'))}  "
+                     f"· {t.get('opened_date', '')}")
+            buttons.append([{"text": label, "callback_data": f"cancel_auto|{t['ticker']}"}])
+
+        recent_closed = sorted(closed, key=lambda x: x.get("closed_date", ""), reverse=True)[:5]
+        for t in recent_closed:
+            ret  = t.get("return_pct", 0)
+            sign = "+" if ret >= 0 else ""
+            label = (f"🔴 SELL  {t['ticker']}  ${_p(t.get('closed_price'))}  "
+                     f"{sign}{ret}%  · {t.get('closed_date', '')}")
+            buttons.append([{"text": label, "callback_data": f"cancel_auto|{t['ticker']}"}])
+
+        if not buttons:
+            return "📭 No trades to cancel."
+
+        send_inline_keyboard(
+            "↩️ <b>Which transaction to undo?</b>\n"
+            "<i>Tap a buy to remove it, or a sell to reopen the position.</i>",
+            buttons,
+            chat_id=chat_id,
+        )
         return ""
 
     if text.startswith("CANCEL "):
@@ -1677,8 +2035,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             )
             return ""
 
-    # ── /positions ────────────────────────────────────────────────────────────
-    if text == "PORTFOLIO":
+    # ── /positions / /portfolio ───────────────────────────────────────────────
+    if text in ("POSITIONS", "PORTFOLIO"):
         from config_manager import load_trade_log
         import yfinance as yf
 
