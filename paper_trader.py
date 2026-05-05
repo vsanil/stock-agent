@@ -233,7 +233,25 @@ def paper_performance() -> str:
     )
 
 
-def paper_reset() -> str:
-    """Wipe paper portfolio and start fresh."""
-    _save({"positions": [], "history": [], "starting_cash": 10_000.0, "cash": 10_000.0})
-    return "🔄 Paper portfolio reset. Starting cash: <b>$10,000.00</b>"
+def paper_add_cash(amount: float) -> str:
+    """Add cash to the paper portfolio (and increase starting_cash baseline)."""
+    if amount <= 0:
+        return "❌ Amount must be greater than zero."
+    data = _load()
+    data["cash"]          = round(data["cash"] + amount, 2)
+    data["starting_cash"] = round(data["starting_cash"] + amount, 2)
+    _save(data)
+    return (
+        f"💵 <b>Cash Added</b>\n"
+        f"Added: <b>${amount:,.2f}</b>\n"
+        f"Available cash: <b>${data['cash']:,.2f}</b>\n"
+        f"Starting baseline: ${data['starting_cash']:,.2f}"
+    )
+
+
+def paper_reset(starting_cash: float | None = None) -> str:
+    """Wipe paper portfolio and start fresh with the given cash (or keep existing amount)."""
+    current = _load()
+    amount  = starting_cash if starting_cash is not None else current.get("starting_cash", 10_000.0)
+    _save({"positions": [], "history": [], "starting_cash": amount, "cash": amount})
+    return f"🔄 Paper portfolio reset. Starting cash: <b>${amount:,.2f}</b>"

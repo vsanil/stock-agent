@@ -1132,6 +1132,9 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command == "paper_sell":
         return _parse_and_execute(f"PAPER SELL {text}", original=f"/paper_sell {text}", chat_id=chat_id)
 
+    if command == "paper_add_cash":
+        return _parse_and_execute(f"PAPER ADD CASH {text}", original=f"/paper_add_cash {text}", chat_id=chat_id)
+
     return _handle_natural_language(text)
 
 
@@ -1272,7 +1275,8 @@ def _nl_parse_trade(command: str, raw: str) -> dict:
         "alert":     '{"ticker": "NVDA or null", "price": 800.0, "direction": "above|below|auto"}',
         "unalert":   '{"ticker": "NVDA or null"}',
         "paper_buy": '{"ticker": "AAPL or null", "shares": 10, "price": null}  — price is optional',
-        "paper_sell":'{"ticker": "AAPL or null", "shares": null, "price": null}  — both optional',
+        "paper_sell":  '{"ticker": "AAPL or null", "shares": null, "price": null}  — both optional',
+        "paper_reset": '{"price": 50000.0}  — the starting cash amount (price field reused for amount)',
     }
     schema = schemas.get(command, '{"ticker": null}')
 
@@ -1517,9 +1521,32 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         from paper_trader import paper_performance
         return paper_performance()
 
-    if text == "PAPER RESET":
+    if text == "PAPER ADD CASH" or text.startswith("PAPER ADD CASH "):
+        from paper_trader import paper_add_cash
+        parts = text.split()
+        amount = None
+        if len(parts) >= 4 and _is_number(parts[3]):
+            amount = float(parts[3].replace(",", ""))
+        elif len(parts) >= 4:
+            raw    = text[len("PAPER ADD CASH "):].strip()
+            parsed = _nl_parse_trade("paper_reset", raw)   # reuse reset schema (price = amount)
+            amount = parsed.get("price")
+        if not amount:
+            return "🤔 How much to add? Try: /paper_add_cash 5000 or /paper_add_cash 10k"
+        return paper_add_cash(amount)
+
+    if text == "PAPER RESET" or text.startswith("PAPER RESET "):
         from paper_trader import paper_reset
-        return paper_reset()
+        amount = None
+        parts  = text.split()
+        if len(parts) == 3 and _is_number(parts[2]):
+            amount = float(parts[2].replace(",", ""))
+        elif len(parts) >= 3:
+            # NL: "paper reset 50k" / "paper reset 100000 dollars"
+            raw    = text[len("PAPER RESET "):].strip()
+            parsed = _nl_parse_trade("paper_reset", raw)
+            amount = parsed.get("price")   # reuse price field for the cash amount
+        return paper_reset(amount)
 
     # ── Backtest ──────────────────────────────────────────────────────────────
     if text == "BACKTEST":
@@ -1543,51 +1570,29 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text in ("HELP", "START"):
         return (
-            "📋 <b>Available commands:</b>"
-            "\n\n<b>— Daily —</b>\n"
-            "\n/today\n<i>re-send today's picks</i>"
-            "\n\n/prices\n<i>live prices for today's picks</i>"
-            "\n\n/perf\n<i>all-time performance stats</i>"
-            "\n\n/explain &lt;question&gt;\n<i>ask anything about a pick</i>"
-            "\n\n<b>— My Trades —</b>\n"
-            "\n/bought AAPL 182.50\n<i>log a purchase (supports natural language)</i>"
-            "\n\n/sold AAPL 197.10\n<i>log a sale + see P&amp;L</i>"
-            "\n\n/positions\n<i>live P&amp;L on open trades</i>"
-            "\n\n/history\n<i>date-wise buy/sell transaction log</i>"
-            "\n\n/cancel\n<i>tap a recent trade to undo it</i>"
-            "\n\n<b>— Budgets —</b>\n"
-            "\n/set_st &lt;n&gt;\n<i>stock short-term budget</i>"
-            "\n\n/set_lt &lt;n&gt;\n<i>stock long-term budget</i>"
-            "\n\n/set_cst &lt;n&gt;\n<i>crypto short-term budget</i>"
-            "\n\n/set_clt &lt;n&gt;\n<i>crypto long-term budget</i>"
-            "\n\n<b>— Intelligence —</b>\n"
-            "\n/set_risk &lt;profile&gt;\n<i>conservative | moderate | aggressive</i>"
-            "\n\n/mode st|lt|both\n<i>show short-term, long-term, or both sections</i>"
-            "\n\n/watch NVDA TSLA\n<i>always evaluate these tickers</i>"
-            "\n\n/watch none\n<i>clear watchlist</i>"
-            "\n\n/exclude energy\n<i>never pick from these sectors</i>"
-            "\n\n/exclude none\n<i>clear sector exclusions</i>"
-            "\n\n/watchlist\n<i>show intelligence settings</i>"
-            "\n\n<b>— Market —</b>\n"
-            "\n/regime\n<i>current market regime (bull/bear/volatile)</i>"
-            "\n\n/backtest\n<i>historical strategy backtest</i>"
-            "\n\n<b>— Price Alerts —</b>\n"
-            "\n/alert NVDA 1000\n<i>notify when NVDA crosses $1000</i>"
-            "\n\n/alert NVDA below 900\n<i>notify when NVDA drops below $900</i>"
-            "\n\n/alerts\n<i>list all active alerts</i>"
-            "\n\n/unalert NVDA\n<i>remove NVDA alerts</i>"
-            "\n\n<b>— Paper Trading —</b>\n"
-            "\n/paper_buy AAPL 10\n<i>simulate buying 10 shares</i>"
-            "\n\n/paper_sell AAPL\n<i>simulate selling position</i>"
-            "\n\n/paper_portfolio\n<i>paper P&amp;L summary</i>"
-            "\n\n/paper_perf\n<i>paper trading win rate</i>"
-            "\n\n/paper_reset\n<i>reset paper portfolio to $10k</i>"
-            "\n\n<b>— Control —</b>\n"
-            "\n/pause\n<i>stop daily picks</i>"
-            "\n\n/resume\n<i>restart daily picks</i>"
-            "\n\n/status\n<i>show full config</i>"
-            "\n\n/reset\n<i>restore default config</i>"
-            "\n\n/help\n<i>show this list</i>"
+            "📋 <b>Commands</b>\n"
+            "\n<b>Daily</b>"
+            "\n/today  ·  /prices  ·  /perf"
+            "\n/explain &lt;question&gt;\n"
+            "\n<b>My Trades</b>"
+            "\n/bought  ·  /sold  ·  /cancel"
+            "\n/positions  ·  /history\n"
+            "\n<b>Budgets</b>"
+            "\n/set_st  ·  /set_lt"
+            "\n/set_cst  ·  /set_clt\n"
+            "\n<b>Intelligence</b>"
+            "\n/set_risk  ·  /mode  ·  /watchlist"
+            "\n/watch  ·  /exclude\n"
+            "\n<b>Market</b>"
+            "\n/regime  ·  /backtest\n"
+            "\n<b>Price Alerts</b>"
+            "\n/alert  ·  /alerts  ·  /unalert\n"
+            "\n<b>Paper Trading</b>"
+            "\n/paper_buy  ·  /paper_sell"
+            "\n/paper_portfolio  ·  /paper_perf"
+            "\n/paper_reset  ·  /paper_add_cash\n"
+            "\n<b>Control</b>"
+            "\n/pause  ·  /resume  ·  /status  ·  /reset  ·  /help"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -2136,6 +2141,44 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                              f"<i>(price unavailable)</i>{manual}")
                 if target or stop:
                     lines.append(f"   target <code>${target}</code>  stop <code>${stop}</code>")
+            lines.append("")
+
+        # ── Portfolio totals footer ───────────────────────────────────────────
+        total_invested  = 0.0
+        total_current   = 0.0
+        winners         = 0
+        losers          = 0
+        for t in open_trades:
+            entry   = float(t.get("entry_price") or 0)
+            alloc   = float(t.get("allocation") or 0)
+            shares  = float(t.get("shares") or 0)
+            current = prices.get(t["ticker"])
+            if entry and current:
+                # derive cost from allocation (dollars) or shares × entry
+                cost_basis = alloc if alloc else (shares * entry if shares else 0)
+                curr_val   = (alloc / entry * current) if alloc else (shares * current if shares else 0)
+                total_invested += cost_basis
+                total_current  += curr_val
+                if current >= entry:
+                    winners += 1
+                else:
+                    losers += 1
+
+        if total_invested > 0:
+            total_pnl     = total_current - total_invested
+            total_pnl_pct = total_pnl / total_invested * 100
+            pnl_sign      = "+" if total_pnl >= 0 else ""
+            pnl_emoji     = "🟢" if total_pnl >= 0 else "🔴"
+            lines.append("─────────────────")
+            lines.append(
+                f"{pnl_emoji} <b>Total P&L: {pnl_sign}{total_pnl_pct:.1f}%</b>  "
+                f"(${total_pnl:+,.2f})"
+            )
+            lines.append(
+                f"   Invested: <b>${total_invested:,.2f}</b>  →  "
+                f"Now: <b>${total_current:,.2f}</b>"
+            )
+            lines.append(f"   {winners}🟢 winning  ·  {losers}🔴 losing  ·  {len(open_trades)} total")
             lines.append("")
 
         lines.append("<i>Use <code>/sold TICKER price</code> to close a position.</i>")

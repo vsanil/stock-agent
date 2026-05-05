@@ -145,7 +145,7 @@ MOCK_CRYPTO_CANDIDATES = {
 def detect_run_mode(now_et: datetime) -> str:
     """Auto-detect run mode by ET hour/weekday. Override with RUN_MODE env var."""
     forced = os.environ.get("RUN_MODE", "").lower()
-    if forced in ("morning", "confirmation", "weekly", "close_check", "prescreener"):
+    if forced in ("morning", "confirmation", "weekly", "close_check", "prescreener", "price_alerts"):
         return forced
     if now_et.weekday() == 5 and now_et.hour < 10:   # Saturday morning
         return "weekly"
@@ -610,6 +610,68 @@ def run_weekly_recap(config: dict, now_et: datetime):
         print(f"[agent] Weekly recap failed (non-critical): {exc}")
 
 
+# ── Intraday price-alert-only run (every 30 min during market hours) ─────────
+
+def run_price_alerts():
+    """
+    Lightweight run: check price alerts + trailing stops only.
+    No Claude call, no screener — just yfinance price fetch.
+    Designed to run every 30 minutes during market hours.
+    """
+    print("[agent] Running intraday price alerts check...")
+
+    # Check user-set price alerts (above/below thresholds)
+    try:
+        fired = check_all_alerts(send_fn=_alert)
+        if fired:
+            print(f"[agent] {fired} price alert(s) triggered.")
+        else:
+            print("[agent] No price alerts triggered.")
+    except Exception as exc:
+        print(f"[agent] Price alert check failed: {exc}")
+
+    # Also check trailing stops on open positions using live prices
+    try:
+        from trade_logger import load_trade_log, update_trailing_stops, check_and_close_trades
+        log = load_trade_log()
+        open_trades = log.get("open", [])
+        if not open_trades:
+            return
+
+        import yfinance as yf
+        tickers = list({t["ticker"] for t in open_trades})
+        raw = yf.download(" ".join(tickers), period="1d", interval="1m",
+                          progress=False, auto_adjust=True)
+        if hasattr(raw["Close"], "iloc"):
+            current_prices = {t: float(raw["Close"][t].dropna().iloc[-1])
+                              for t in tickers if t in raw["Close"].columns}
+        else:
+            current_prices = {tickers[0]: float(raw["Close"].dropna().iloc[-1])} if tickers else {}
+
+        trail_closed = update_trailing_stops(current_prices)
+        for trade in trail_closed:
+            sign = "+" if trade["return_pct"] >= 0 else ""
+            _alert(
+                f"🔒 <b>{trade['ticker']} TRAILING STOP HIT</b>\n"
+                f"Sold @ <code>${trade['closed_price']}</code>  "
+                f"<b>{sign}{trade['return_pct']:.1f}%</b>  (${trade['gain_usd']:+.2f})\n"
+                f"<i>Peak ${trade.get('highest_reached', '?')} → "
+                f"Trail stop ${trade.get('trailing_stop_level', '?')}</i>"
+            )
+
+        newly_closed = check_and_close_trades(current_prices)
+        for trade in newly_closed:
+            emoji = "✅" if trade["outcome"] == "target" else ("🔴" if trade["outcome"] == "stop" else "⏱")
+            sign  = "+" if trade["return_pct"] >= 0 else ""
+            _alert(f"{emoji} <b>{trade['ticker']}</b> {trade['outcome'].upper()} HIT "
+                   f"@ <code>${trade['closed_price']}</code>  "
+                   f"<b>{sign}{trade['return_pct']:.1f}%</b>  "
+                   f"(${trade['gain_usd']:+.2f})")
+
+    except Exception as exc:
+        print(f"[agent] Intraday trade check failed (non-critical): {exc}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -632,6 +694,8 @@ def main():
         run_weekly_recap(config, now_et)
     elif mode == "close_check":
         run_close_check()
+    elif mode == "price_alerts":
+        run_price_alerts()
     else:
         run_confirmation()
 
