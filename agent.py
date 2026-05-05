@@ -174,15 +174,15 @@ def _run_crypto_with_retry() -> dict:
             result = run_crypto_screener()
             if result.get("short_term") or result.get("long_term"):
                 if attempt > 1:
-                    _alert(f"✅ Crypto screener recovered on attempt {attempt}/5.")
+                    _alert(f"✅ Crypto screener recovered on attempt {attempt}/5.", admin_only=True)
                 return result
             raise ValueError("Screener returned empty results")
         except Exception as exc:
             print(f"[agent] Crypto screener attempt {attempt}/5 failed: {exc}")
             if attempt == 3:
-                _alert(f"⚠️ Crypto screener still failing after 3 attempts — retrying ({exc}).")
+                _alert(f"⚠️ Crypto screener still failing after 3 attempts — retrying ({exc}).", admin_only=True)
             elif attempt == len(CRYPTO_RETRY_DELAYS) + 1:
-                _alert("❌ Crypto screener failed after 5 attempts. Skipping crypto today.")
+                _alert("❌ Crypto screener failed after 5 attempts. Skipping crypto today.", admin_only=True)
 
     return empty
 
@@ -310,7 +310,7 @@ def run_morning(config: dict, now_et: datetime):
                     )
                 except Exception as exc:
                     print(f"[agent] Stock screener failed: {exc}")
-                    _alert(f"⚠ Stock screener error: {exc}")
+                    _alert(f"⚠ Stock screener error: {exc}", admin_only=True)
 
         # ── Crypto: use midnight cache if fresh, else run live ────────────────
         crypto_candidates = {"short_term": [], "long_term": []}
@@ -326,7 +326,7 @@ def run_morning(config: dict, now_et: datetime):
     has_crypto = bool(crypto_candidates["short_term"] or crypto_candidates["long_term"])
 
     if not has_stocks and not has_crypto:
-        _alert("⚠ Both screeners returned no candidates today. No picks sent.")
+        _alert("⚠ Both screeners returned no candidates today. No picks sent.", admin_only=True)
         return
 
     # Apply dynamic pick counts based on current budget
@@ -357,7 +357,7 @@ def run_morning(config: dict, now_et: datetime):
         )
     except Exception as exc:
         print(f"[agent] Claude analysis failed: {exc}")
-        _alert("⚠ Agent error today. Claude analysis unavailable.")
+        _alert("⚠ Agent error today. Claude analysis unavailable.", admin_only=True)
         return
 
     # Attach macro context so the formatter can display it
@@ -396,7 +396,7 @@ def run_confirmation():
         current_prices = get_current_prices(picks)
     except Exception as exc:
         print(f"[agent] Price fetch failed: {exc}")
-        _alert("⚠ Could not fetch prices for 10:30 AM check.")
+        _alert("⚠ Could not fetch prices for 10:30 AM check.", admin_only=True)
         return
 
     # ── Trailing stop updates ─────────────────────────────────────────────────
@@ -584,7 +584,7 @@ def run_close_check():
                 to_s    = f"  {((float(stop)/cur-1)*100):+.1f}% to stop" if stop else ""
                 alerts.append(f"{emoji} <b>{ticker}</b> <code>${cur:.2f}</code>  {sign}{ret_pct:.1f}%{to_t}{to_s}")
             if alerts:
-                _alert("📊 <b>End-of-day portfolio check</b>\n\n" + "\n".join(alerts))
+                _alert("📊 <b>End-of-day portfolio check</b>\n\n" + "\n".join(alerts), admin_only=True)
     except Exception as exc:
         print(f"[agent] End-of-day portfolio summary failed (non-critical): {exc}")
 
@@ -702,7 +702,18 @@ def main():
     print(f"[agent] Done ({mode}) for {now_et.strftime('%Y-%m-%d')}.")
 
 
+def _all_recipients() -> list[str]:
+    """Return all allowed chat_ids (always includes owner)."""
+    try:
+        from config_manager import get_allowed_users
+        return get_allowed_users()
+    except Exception:
+        owner = os.environ.get("TELEGRAM_CHAT_ID", "")
+        return [owner] if owner else []
+
+
 def _send_or_print(message: str, label: str = ""):
+    """Broadcast a scheduled message to all allowed users."""
     if DRY_RUN:
         print(f"\n{'=' * 60}")
         print(f"DRY RUN — {label} (not sent):")
@@ -711,17 +722,30 @@ def _send_or_print(message: str, label: str = ""):
         print(f"\nLength: {len(message)} chars")
         print("=" * 60)
     else:
-        print(f"[agent] Sending {label} to Telegram...")
-        success = send_message(message)
-        if not success:
-            print("[agent] WARNING: Message failed to send.")
-            sys.exit(1)
+        recipients = _all_recipients()
+        print(f"[agent] Broadcasting {label} to {len(recipients)} user(s)...")
+        for uid in recipients:
+            success = send_message(message, chat_id=uid)
+            if not success:
+                print(f"[agent] WARNING: Message failed to send to {uid}.")
 
 
-def _alert(text: str):
+def _alert(text: str, admin_only: bool = False):
+    """
+    Send an operational alert.
+    admin_only=True  → owner only (errors, warnings, system messages)
+    admin_only=False → all users (trade closes, earnings warnings, market info)
+    """
     print(f"[agent] ALERT: {text}")
-    if not DRY_RUN:
-        send_message(text)
+    if DRY_RUN:
+        return
+    if admin_only:
+        owner = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if owner:
+            send_message(text, chat_id=owner)
+    else:
+        for uid in _all_recipients():
+            send_message(text, chat_id=uid)
 
 
 if __name__ == "__main__":

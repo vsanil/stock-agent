@@ -235,11 +235,15 @@ def _short_company(name: str, max_len: int = 22) -> str:
 def format_daily_message(picks: dict, config: dict) -> str:
     """Build the formatted daily Telegram message from Claude picks (stocks + crypto)."""
     today            = date.today().strftime("%a %b %d, %Y")
-    short_budget     = config.get("short_term_budget", 25)
-    long_budget      = config.get("long_term_budget", 50)
-    crypto_st_budget = config.get("crypto_short_budget", 20)
-    crypto_lt_budget = config.get("crypto_long_budget", 30)
-    pick_mode        = config.get("pick_mode", "both")   # "st" | "lt" | "both"
+    stock_budget  = config.get("stock_budget")   # None = unset
+    crypto_budget = config.get("crypto_budget")  # None = unset
+    pick_mode     = config.get("pick_mode", "both")   # "st" | "lt" | "both"
+
+    # Compute equal per-pick amounts (same logic as ai_analyzer)
+    max_stock_picks  = config.get("max_short_picks", 2) + config.get("max_long_picks", 3)
+    max_crypto_picks = config.get("max_crypto_short_picks", 2) + config.get("max_crypto_long_picks", 2)
+    per_stock  = round(float(stock_budget)  / max(max_stock_picks,  1), 2) if stock_budget  else None
+    per_crypto = round(float(crypto_budget) / max(max_crypto_picks, 1), 2) if crypto_budget else None
 
     show_st = pick_mode in ("st", "both")
     show_lt = pick_mode in ("lt", "both")
@@ -319,36 +323,40 @@ def format_daily_message(picks: dict, config: dict) -> str:
             f"<i>{_esc(c.get('thesis'))}</i>"
         )
 
-    # ── Short-term stocks — green tinted blockquote ───────────────────────────
+    # ── Short-term stocks ─────────────────────────────────────────────────────
     if st_picks:
+        budget_tag = f"  <code>${per_stock}/pick</code>" if per_stock else ""
         body = "\n\n".join(_pick_row_st(i, s) for i, s in enumerate(st_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>📈 <b>STOCK — SHORT TERM</b>  <code>${short_budget} / trade</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>📈 <b>STOCK — SHORT TERM</b>{budget_tag}\n\n{body}</blockquote>",
         ]
 
-    # ── Long-term stocks — blue tinted blockquote ─────────────────────────────
+    # ── Long-term stocks ──────────────────────────────────────────────────────
     if lt_picks:
+        budget_tag = f"  <code>${per_stock}/pick</code>" if per_stock else ""
         body = "\n\n".join(_pick_row_lt(i, s) for i, s in enumerate(lt_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>🏦 <b>STOCK — LONG TERM</b>  <code>${long_budget} / mo DCA</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>🏦 <b>STOCK — LONG TERM</b>{budget_tag}\n\n{body}</blockquote>",
         ]
 
-    # ── Crypto short-term — orange tinted blockquote ──────────────────────────
+    # ── Crypto short-term ─────────────────────────────────────────────────────
     if cst_picks:
+        budget_tag = f"  <code>${per_crypto}/pick</code>" if per_crypto else ""
         body = "\n\n".join(_pick_row_cst(i, c) for i, c in enumerate(cst_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>🪙 <b>CRYPTO — SHORT TERM</b>  <code>${crypto_st_budget} / trade</code>  ⚡ HIGH RISK\n\n{body}</blockquote>",
+            f"<blockquote expandable>🪙 <b>CRYPTO — SHORT TERM</b>{budget_tag}  ⚡ HIGH RISK\n\n{body}</blockquote>",
         ]
 
-    # ── Crypto long-term — purple tinted blockquote ───────────────────────────
+    # ── Crypto long-term ──────────────────────────────────────────────────────
     if clt_picks:
+        budget_tag = f"  <code>${per_crypto}/pick</code>" if per_crypto else ""
         body = "\n\n".join(_pick_row_clt(i, c) for i, c in enumerate(clt_picks, 1))
         lines += [
             "",
-            f"<blockquote expandable>💎 <b>CRYPTO — LONG TERM</b>  <code>${crypto_lt_budget} / mo DCA</code>\n\n{body}</blockquote>",
+            f"<blockquote expandable>💎 <b>CRYPTO — LONG TERM</b>{budget_tag}\n\n{body}</blockquote>",
         ]
 
     # ── Footer ────────────────────────────────────────────────────────────────
@@ -1116,9 +1124,16 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command == "set_risk":
         return _parse_and_execute(f"SET RISK {text}", original=text, chat_id=chat_id)
 
-    key_map = {"set_st": "ST", "set_lt": "LT", "set_cst": "CST", "set_clt": "CLT"}
+    if command == "set_budget":
+        return _parse_and_execute(f"SET BUDGET {text}".strip(), original=f"/set_budget {text}", chat_id=chat_id)
+
+    # Legacy single-bucket commands → redirect to set_budget
+    key_map = {"set_st": "stocks", "set_lt": "stocks", "set_cst": "crypto", "set_clt": "crypto"}
     if command in key_map:
-        return _parse_and_execute(f"SET {key_map[command]} {text}", original=text, chat_id=chat_id)
+        bucket = key_map[command]
+        if text:
+            return _parse_and_execute(f"SET BUDGET {bucket} {text}", original=text, chat_id=chat_id)
+        return _parse_and_execute("SET BUDGET", original="/set_budget", chat_id=chat_id)
 
     if command == "alert":
         return _parse_and_execute(f"ALERT {text}", original=f"/alert {text}", chat_id=chat_id)
@@ -1135,6 +1150,21 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command == "paper_add_cash":
         return _parse_and_execute(f"PAPER ADD CASH {text}", original=f"/paper_add_cash {text}", chat_id=chat_id)
 
+    if command == "start":
+        return _parse_and_execute("START", original="/start", chat_id=chat_id)
+
+    if command == "share":
+        return _parse_and_execute("SHARE", original="/share", chat_id=chat_id)
+
+    if command == "adduser":
+        return _parse_and_execute(f"ADDUSER {text}", original=f"/adduser {text}", chat_id=chat_id)
+
+    if command == "removeuser":
+        return _parse_and_execute(f"REMOVEUSER {text}", original=f"/removeuser {text}", chat_id=chat_id)
+
+    if command == "users":
+        return _parse_and_execute("USERS", original="/users", chat_id=chat_id)
+
     return _handle_natural_language(text)
 
 
@@ -1146,7 +1176,7 @@ def _handle_natural_language(query: str) -> str:
       "make my picks more aggressive"    → set_risk aggressive
       "add nvidia and apple to watchlist" → watch NVDA AAPL
       "never show me energy stocks"       → exclude Energy
-      "increase my short term budget to 50" → set_budget short_term_budget 50
+      "set stock budget to 200, crypto 50" → set_budget stocks 200 crypto 50
       "why was microsoft picked today?"   → explain query
     """
     import anthropic
@@ -1161,7 +1191,7 @@ Available intents and their exact JSON format:
 {"intent": "watch_clear"}
 {"intent": "exclude",     "sectors": ["Energy", "Utilities"]}
 {"intent": "exclude_clear"}
-{"intent": "set_budget",  "key": "short_term_budget|long_term_budget|crypto_short_budget|crypto_long_budget", "value": 50}
+{"intent": "set_budget",  "stock_budget": 200, "crypto_budget": 50}   — either key optional, null to clear
 {"intent": "pause"}
 {"intent": "resume"}
 {"intent": "status"}
@@ -1179,9 +1209,10 @@ Rules:
 - Map "add X to watchlist/watch X" → watch with tickers in uppercase
 - Map "remove/clear watchlist" → watch_clear
 - Map "exclude/skip/never pick sector" → exclude with proper sector name
-- Map "increase/set/change budget" → set_budget with correct key and numeric value
-- Budget keys: "short term" → short_term_budget, "long term" → long_term_budget,
-  "crypto short" → crypto_short_budget, "crypto long" → crypto_long_budget
+- Map "set/change/increase budget" → set_budget with stock_budget and/or crypto_budget numeric values
+- "stocks 200 crypto 50" → {"stock_budget": 200, "crypto_budget": 50}
+- "stock budget 150" → {"stock_budget": 150}
+- "clear budgets" → {"stock_budget": null, "crypto_budget": null}
 - If the message is a question about picks, use explain
 - If truly unclear, use unknown"""
 
@@ -1214,17 +1245,13 @@ Rules:
     if intent == "exclude_clear":
         return _parse_and_execute("EXCLUDE NONE", original="/exclude none")
     if intent == "set_budget":
-        key = parsed.get("key", "")
-        val = parsed.get("value", 0)
-        key_to_cmd = {
-            "short_term_budget":   f"SET ST {val}",
-            "long_term_budget":    f"SET LT {val}",
-            "crypto_short_budget": f"SET CST {val}",
-            "crypto_long_budget":  f"SET CLT {val}",
-        }
-        cmd = key_to_cmd.get(key)
-        if cmd:
-            return _parse_and_execute(cmd, original=query)
+        parts = []
+        if parsed.get("stock_budget") is not None:
+            parts.append(f"stocks {parsed['stock_budget']}")
+        if parsed.get("crypto_budget") is not None:
+            parts.append(f"crypto {parsed['crypto_budget']}")
+        cmd = f"SET BUDGET {' '.join(parts)}" if parts else "SET BUDGET off"
+        return _parse_and_execute(cmd, original=query)
     if intent == "pause":
         return _parse_and_execute("PAUSE", original=query)
     if intent == "resume":
@@ -1581,8 +1608,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/set_st  ·  /set_lt"
             "\n/set_cst  ·  /set_clt\n"
             "\n<b>Intelligence</b>"
-            "\n/set_risk  ·  /mode  ·  /watchlist"
-            "\n/watch  ·  /exclude\n"
+            "\n/set_risk  ·  /mode  ·  /set_budget"
+            "\n/watch  ·  /exclude  ·  /watchlist\n"
             "\n<b>Market</b>"
             "\n/regime  ·  /backtest\n"
             "\n<b>Price Alerts</b>"
@@ -1593,6 +1620,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/paper_reset  ·  /paper_add_cash\n"
             "\n<b>Control</b>"
             "\n/pause  ·  /resume  ·  /status  ·  /reset  ·  /help"
+            "\n/users  ·  /adduser  ·  /removeuser  <i>(admin)</i>"
+            "\n/share  <i>(invite link)</i>"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -1707,6 +1736,87 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                  f"Excluded sectors: <b>{', '.join(ex) if ex else 'none'}</b>"]
         return "\n".join(lines)
 
+    # ── /share ───────────────────────────────────────────────────────────────
+    if text == "SHARE":
+        try:
+            resp = requests.get(
+                TELEGRAM_API.format(token=_bot_token(), method="getMe"),
+                timeout=5,
+            ).json()
+            username = resp.get("result", {}).get("username", "")
+            bot_link = f"https://t.me/{username}" if username else "https://t.me/yourbotname"
+        except Exception:
+            bot_link = "https://t.me/yourbotname"
+
+        return (
+            f"📲 <b>Share this with friends:</b>\n\n"
+            f"Hey! I'm using a personal AI stock advisor bot — it sends daily stock &amp; crypto picks, "
+            f"price alerts, and weekly performance recaps.\n\n"
+            f"Join here 👇\n"
+            f"{bot_link}\n\n"
+            f"<i>(Tap the link — it'll install Telegram if you don't have it, then open the bot automatically)</i>"
+        )
+
+    # ── /start ────────────────────────────────────────────────────────────────
+    if text == "START":
+        return (
+            "👋 <b>Welcome to Stock Advisor Bot!</b>\n\n"
+            "You're receiving daily stock and crypto picks with short-term and long-term ideas.\n\n"
+            "<b>Quick start:</b>\n"
+            "/today — today's picks\n"
+            "/positions — your open trades\n"
+            "/help — all commands\n\n"
+            "<i>Questions? Just type naturally — I understand plain English.</i>"
+        )
+
+    # ── Admin: user management ────────────────────────────────────────────────
+    def _is_admin() -> bool:
+        return str(chat_id) == str(os.environ.get("TELEGRAM_CHAT_ID", ""))
+
+    if text.startswith("ADDUSER ") or text == "ADDUSER":
+        if not _is_admin():
+            return "🔒 Admin only."
+        parts = text.split()
+        if len(parts) < 2:
+            return "Usage: /adduser <chat_id>"
+        from config_manager import add_allowed_user
+        new_id = parts[1].strip()
+        add_allowed_user(new_id)
+        send_message(
+            "✅ <b>You've been approved!</b>\n\n"
+            "Welcome to Stock Advisor Bot. Send /start to begin.",
+            chat_id=new_id,
+        )
+        return f"✅ Added <code>{new_id}</code> to allowlist. They've been notified."
+
+    if text.startswith("REMOVEUSER ") or text == "REMOVEUSER":
+        if not _is_admin():
+            return "🔒 Admin only."
+        parts = text.split()
+        if len(parts) < 2:
+            return "Usage: /removeuser <chat_id>"
+        from config_manager import remove_allowed_user
+        rem_id = parts[1].strip()
+        try:
+            remove_allowed_user(rem_id)
+            return f"✅ Removed <code>{rem_id}</code> from allowlist."
+        except ValueError as e:
+            return f"❌ {e}"
+
+    if text == "USERS":
+        if not _is_admin():
+            return "🔒 Admin only."
+        from config_manager import get_allowed_users
+        users = get_allowed_users()
+        owner = str(os.environ.get("TELEGRAM_CHAT_ID", ""))
+        lines = ["<b>👥 Allowed Users</b>\n"]
+        for u in users:
+            tag = "  <i>(you)</i>" if u == owner else ""
+            lines.append(f"• <code>{u}</code>{tag}")
+        lines.append(f"\n<i>{len(users)} user(s) total</i>")
+        return "\n".join(lines)
+
+    # ── /pause /resume /reset /status ─────────────────────────────────────────
     if text == "PAUSE":
         update_config("enabled", False)
         return "⏸ Agent paused. Daily picks suspended. Send /resume to restart."
@@ -1719,8 +1829,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         config = reset_config()
         return (
             f"🔄 Config reset to defaults.\n"
-            f"ST=${config['short_term_budget']} LT=${config['long_term_budget']}\n"
-            f"CST=${config.get('crypto_short_budget', 20)} CLT=${config.get('crypto_long_budget', 30)}"
+            f"Stocks=${config.get('stock_budget') or 'unset'}  "
+            f"Crypto=${config.get('crypto_budget') or 'unset'}"
         )
 
     if text == "STATUS":
@@ -1730,10 +1840,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         ex = config.get("excluded_sectors", [])
         return (
             f"<b>⚙️ Config ({status})</b>\n"
-            f"Stock ST:         ${config.get('short_term_budget')}\n"
-            f"Stock LT:         ${config.get('long_term_budget')}\n"
-            f"Crypto ST:        ${config.get('crypto_short_budget', 20)}\n"
-            f"Crypto LT:        ${config.get('crypto_long_budget', 30)}\n"
+            f"Stock budget:     {('$'+str(config.get('stock_budget'))) if config.get('stock_budget') else 'not set'}\n"
+            f"Crypto budget:    {('$'+str(config.get('crypto_budget'))) if config.get('crypto_budget') else 'not set'}\n"
             f"Risk profile:     {config.get('risk_profile', 'moderate')}\n"
             f"Pick mode:        {config.get('pick_mode', 'both')}\n"
             f"Watchlist:        {', '.join(wl) if wl else 'none'}\n"
@@ -1743,45 +1851,77 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         )
 
     # Bare budget commands — prompt for the value
-    if text in ("SET ST", "SET LT", "SET CST", "SET CLT"):
-        cmd_map = {"SET ST": "set_st", "SET LT": "set_lt",
-                   "SET CST": "set_cst", "SET CLT": "set_clt"}
-        _prompt_for_param(cmd_map[text], chat_id)
-        return ""
+    # ── /set_budget ───────────────────────────────────────────────────────────
+    if text == "SET BUDGET":
+        config = get_config()
+        sb = config.get("stock_budget")
+        cb = config.get("crypto_budget")
+        sb_str = f"${sb}" if sb else "not set"
+        cb_str = f"${cb}" if cb else "not set"
+        return (
+            f"💰 <b>Current budgets</b>\n"
+            f"Stocks: <b>{sb_str}</b>\n"
+            f"Crypto: <b>{cb_str}</b>\n\n"
+            f"<i>To update:</i>\n"
+            f"/set_budget stocks 200 crypto 50\n"
+            f"/set_budget stocks 150\n"
+            f"/set_budget off  — clears both"
+        )
 
-    # SET ST/LT/CST/CLT <n>
-    if text.startswith("SET "):
-        parts = text.split()
-        key_map = {
-            "ST":  "short_term_budget",
-            "LT":  "long_term_budget",
-            "CST": "crypto_short_budget",
-            "CLT": "crypto_long_budget",
-        }
+    if text.startswith("SET BUDGET "):
+        raw = text[len("SET BUDGET "):].strip().lower()
+
+        # "off" or "0" → clear both
+        if raw in ("off", "0", "none", "clear"):
+            update_config_multi({"stock_budget": None, "crypto_budget": None})
+            return "✅ Budgets cleared — picks will show no allocation amounts."
+
+        # Parse "stocks <n> crypto <n>" in any order, or just one bucket
+        import re
         updates = {}
-        i = 1
-        while i < len(parts):
-            if parts[i] in key_map and i + 1 < len(parts):
-                try:
-                    updates[key_map[parts[i]]] = float(parts[i + 1])
-                    i += 2
-                    continue
-                except ValueError:
-                    pass
-            i += 1
+        for match in re.finditer(r"(stocks?|crypto)\s+([\d,.]+k?)", raw):
+            bucket = "stock_budget" if match.group(1).startswith("stock") else "crypto_budget"
+            val_str = match.group(2).replace(",", "")
+            val = float(val_str[:-1]) * 1000 if val_str.endswith("k") else float(val_str)
+            updates[bucket] = val if val > 0 else None
 
-        if updates:
-            config = update_config_multi(updates)
-            label_map = {
-                "short_term_budget":   "Stock ST",
-                "long_term_budget":    "Stock LT",
-                "crypto_short_budget": "Crypto ST",
-                "crypto_long_budget":  "Crypto LT",
-            }
-            lines = ["✅ <b>Config updated:</b>"]
-            for k in updates:
-                lines.append(f"{label_map.get(k, k)} → ${config[k]}")
-            return "\n".join(lines)
+        if not updates:
+            # NL fallback: "200 for stocks, 50 crypto"
+            parsed = _nl_parse_trade("paper_reset", raw)   # reuse schema (price = amount)
+            amount = parsed.get("price")
+            if amount:
+                # If no bucket specified, ask which
+                return (
+                    "🤔 Which bucket?\n"
+                    f"/set_budget stocks {int(amount)}\n"
+                    f"/set_budget crypto {int(amount)}\n"
+                    f"/set_budget stocks {int(amount)} crypto {int(amount)}"
+                )
+            return (
+                "🤔 I didn't catch that. Try:\n"
+                "/set_budget stocks 200 crypto 50\n"
+                "/set_budget stocks 150\n"
+                "/set_budget off"
+            )
+
+        config = update_config_multi(updates)
+        lines = ["✅ <b>Budget updated:</b>"]
+        if "stock_budget" in updates:
+            v = config.get("stock_budget")
+            lines.append(f"Stocks → {f'${v}' if v else 'cleared'}")
+        if "crypto_budget" in updates:
+            v = config.get("crypto_budget")
+            lines.append(f"Crypto → {f'${v}' if v else 'cleared'}")
+        # Show resulting per-pick amounts
+        sb = config.get("stock_budget")
+        cb = config.get("crypto_budget")
+        max_s = config.get("max_short_picks", 2) + config.get("max_long_picks", 3)
+        max_c = config.get("max_crypto_short_picks", 2) + config.get("max_crypto_long_picks", 2)
+        if sb:
+            lines.append(f"<i>→ ${round(sb/max_s,2)}/pick across {max_s} stock slots</i>")
+        if cb:
+            lines.append(f"<i>→ ${round(cb/max_c,2)}/pick across {max_c} crypto slots</i>")
+        return "\n".join(lines)
 
     # ── /bought [TICKER|name [price] [shares]] ───────────────────────────────
     if text == "BOUGHT":
@@ -2227,8 +2367,7 @@ if __name__ == "__main__":
         "disclaimer": "For informational purposes only. Not financial advice.",
     }
     mock_config = {
-        "short_term_budget": 25, "long_term_budget": 50,
-        "crypto_short_budget": 20, "crypto_long_budget": 30,
+        "stock_budget": 200, "crypto_budget": 50,
     }
     msg = format_daily_message(mock_picks, mock_config)
     print(msg)

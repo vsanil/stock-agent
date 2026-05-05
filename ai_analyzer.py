@@ -351,24 +351,49 @@ def _build_user_prompt(
         "both": "",
     }.get(pick_mode, "")
 
+    # ── Compute per-pick allocations in code (equal split, not Claude's job) ────
+    stock_budget  = config.get("stock_budget")   # None = unset
+    crypto_budget = config.get("crypto_budget")  # None = unset
+
+    max_stock_picks  = config.get("max_short_picks", 2) + config.get("max_long_picks", 3)
+    max_crypto_picks = config.get("max_crypto_short_picks", 2) + config.get("max_crypto_long_picks", 2)
+
+    if stock_budget:
+        per_stock = round(float(stock_budget) / max(max_stock_picks, 1), 2)
+        stock_alloc_note = (
+            f"  Budget: ${stock_budget} total for stocks today, split equally → "
+            f"${per_stock} per pick. Set 'allocation' to {per_stock} for every stock pick.\n"
+        )
+    else:
+        per_stock = None
+        stock_alloc_note = "  No budget set — set 'allocation' to null for all stock picks.\n"
+
+    if crypto_budget:
+        per_crypto = round(float(crypto_budget) / max(max_crypto_picks, 1), 2)
+        crypto_alloc_note = (
+            f"  Budget: ${crypto_budget} total for crypto today, split equally → "
+            f"${per_crypto} per pick. Set 'allocation' to {per_crypto} for every crypto pick.\n"
+        )
+    else:
+        per_crypto = None
+        crypto_alloc_note = "  No budget set — set 'allocation' to null for all crypto picks.\n"
+
     stocks_block = ""
     if show_st:
-        stocks_block += f"  Short-term budget: ${config.get('short_term_budget', 25)} (target gains within 1-4 weeks)\n"
-        stocks_block += f"  Keep best {config.get('max_short_picks', 2)} short-term stocks.\n"
+        stocks_block += f"  Short-term: Keep best {config.get('max_short_picks', 2)} stocks (target gains within 1-4 weeks)\n"
     if show_lt:
-        stocks_block += f"  Long-term budget:  ${config.get('long_term_budget', 50)} (dollar-cost average over 1-5 years)\n"
-        stocks_block += f"  Keep best {config.get('max_long_picks', 3)} long-term stocks.\n"
+        stocks_block += f"  Long-term: Keep best {config.get('max_long_picks', 3)} stocks (dollar-cost average over 1-5 years)\n"
+    stocks_block += stock_alloc_note
 
-    return f"""Analyze these stock AND crypto candidates for a personal investor with the following budgets:
+    return f"""Analyze these stock AND crypto candidates for a personal investor.
 {f"{mode_note}" + chr(10) if mode_note else ""}
 STOCKS:
 {stocks_block}
 
 ALLOCATION RULE (STRICTLY ENFORCE):
-  - Divide each budget EQUALLY among all picks in that category. Do NOT weight by conviction.
-  - Example: $25 ST budget ÷ 2 picks = $12.50 each. $50 LT budget ÷ 3 picks = $16.67 each.
-  - Same rule for crypto: $20 CST ÷ 2 = $10.00 each. $30 CLT ÷ 2 = $15.00 each.
-  - Every pick in the same category must have the SAME allocation value.
+  - Allocation values are pre-calculated and given to you above. Do NOT change them.
+  - Every stock pick must use the exact same allocation value (or null if no budget set).
+  - Do NOT weight by conviction — conviction affects selection only, not allocation size.
 
 SECTOR DIVERSITY RULE (STRICTLY ENFORCE):
   - Short-term: the 2 picks MUST be from different sectors. No exceptions.
@@ -401,8 +426,9 @@ LONG-TERM TARGET PRICE RULES (STRICTLY ENFORCE):
     of ATH distance or past performance. Do NOT set crypto LT targets implying 100-200%+ gains.
 
 CRYPTO:
-{"  Short-term crypto budget: $" + str(config.get('crypto_short_budget', 20)) + " (target gains within 1-2 weeks, high risk)" + chr(10) + "  Keep best " + str(config.get('max_crypto_short_picks', 2)) + " short-term crypto." if show_st else ""}
-{"  Long-term crypto budget:  $" + str(config.get('crypto_long_budget', 30)) + " (hold 6-24 months)" + chr(10) + "  Keep best " + str(config.get('max_crypto_long_picks', 2)) + " long-term crypto." if show_lt else ""}
+{"  Short-term: Keep best " + str(config.get('max_crypto_short_picks', 2)) + " crypto (target gains within 1-2 weeks, high risk)" if show_st else ""}
+{"  Long-term: Keep best " + str(config.get('max_crypto_long_picks', 2)) + " crypto (hold 6-24 months)" if show_lt else ""}
+{crypto_alloc_note}
 
 CRYPTO DEDUPLICATION RULE (HARD RULE — ZERO EXCEPTIONS):
   - Each crypto symbol may appear in AT MOST ONE category (short_term OR long_term, NEVER both).
@@ -596,9 +622,8 @@ if __name__ == "__main__":
         ],
     }
     mock_config = {
-        "short_term_budget": 25, "long_term_budget": 50,
+        "stock_budget": 200, "crypto_budget": 50,
         "max_short_picks": 2, "max_long_picks": 3,
-        "crypto_short_budget": 20, "crypto_long_budget": 30,
         "max_crypto_short_picks": 2, "max_crypto_long_picks": 2,
     }
     picks = analyze_with_claude(mock_stocks, mock_config, mock_crypto)

@@ -12,8 +12,8 @@ import sys
 import requests
 from flask import Flask, request, jsonify
 
-from config_manager import get_config
-from telegram_notifier import handle_incoming_command, handle_callback_query, set_webhook, send_typing_action, typing_until_done
+from config_manager import get_config, get_allowed_users
+from telegram_notifier import handle_incoming_command, handle_callback_query, set_webhook, send_typing_action, typing_until_done, send_message
 
 app = Flask(__name__)
 
@@ -46,6 +46,34 @@ def webhook():
         return jsonify({"status": "ignored", "reason": "empty text or chat_id"}), 200
 
     print(f"[webhook] Received from {chat_id}: {text!r}")
+
+    # ── Access control ────────────────────────────────────────────────────────
+    owner   = os.environ.get("TELEGRAM_CHAT_ID", "")
+    allowed = get_allowed_users()   # always includes owner
+    is_start = text.strip().lower() in ("/start", "start")
+
+    if chat_id not in allowed:
+        # Anyone can /start — it registers their interest and notifies the owner
+        if is_start:
+            send_message(
+                "👋 <b>Welcome!</b> You've been added to the waitlist.\n\n"
+                "The owner will grant you access shortly.",
+                chat_id=chat_id,
+            )
+            if owner and owner != chat_id:
+                send_message(
+                    f"🔔 <b>Access request</b>\n"
+                    f"New user wants in: <code>{chat_id}</code>\n"
+                    f"To approve: /adduser {chat_id}",
+                    chat_id=owner,
+                )
+        else:
+            send_message(
+                "🔒 You don't have access yet. Send /start to join the waitlist.",
+                chat_id=chat_id,
+            )
+        return jsonify({"status": "ok", "access": "denied"}), 200
+
     with typing_until_done(chat_id):
         reply = handle_incoming_command(text, chat_id=chat_id)
     if reply:

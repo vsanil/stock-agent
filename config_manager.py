@@ -9,8 +9,9 @@ import requests
 
 # ── Default config ────────────────────────────────────────────────────────────
 DEFAULT_CONFIG = {
-    "short_term_budget": 25,
-    "long_term_budget": 50,
+    # Budgets — null means unset (no allocation shown in picks)
+    "stock_budget":  None,   # total daily $ for stocks, split equally across all stock picks
+    "crypto_budget": None,   # total daily $ for crypto, split equally across all crypto picks
     "max_short_picks": 2,
     "max_long_picks": 3,
     "stop_loss_pct": 5,
@@ -19,8 +20,6 @@ DEFAULT_CONFIG = {
     "timezone": "America/New_York",
     # Crypto settings
     "crypto_enabled": True,
-    "crypto_short_budget": 20,
-    "crypto_long_budget": 30,
     "max_crypto_short_picks": 2,
     "max_crypto_long_picks": 2,
     # AI intelligence settings
@@ -29,6 +28,9 @@ DEFAULT_CONFIG = {
     "watchlist": [],                   # e.g. ["NVDA", "TSLA", "BRK-B"] — always evaluated
     # Pick mode: which sections appear in daily message
     "pick_mode": "both",              # "st" | "lt" | "both"
+    # Multi-user pilot: list of chat_id strings allowed to receive messages
+    # Empty list = owner-only mode (just TELEGRAM_CHAT_ID env var).
+    "allowed_users": [],
 }
 
 GIST_FILENAME          = "config.json"
@@ -96,6 +98,43 @@ def reset_config() -> dict:
     """Restore config.json on the Gist to DEFAULT_CONFIG. Returns defaults."""
     _write_config(DEFAULT_CONFIG)
     return dict(DEFAULT_CONFIG)
+
+
+# ── Multi-user allowlist helpers ─────────────────────────────────────────────
+
+def get_allowed_users() -> list[str]:
+    """Return list of allowed chat_ids. Always includes TELEGRAM_CHAT_ID (owner)."""
+    import os
+    config = get_config()
+    users  = [str(u) for u in config.get("allowed_users", [])]
+    owner  = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if owner and owner not in users:
+        users.insert(0, owner)
+    return users
+
+
+def add_allowed_user(chat_id: str) -> list[str]:
+    """Add a chat_id to allowed_users. Returns updated list."""
+    config = get_config()
+    users  = [str(u) for u in config.get("allowed_users", [])]
+    if str(chat_id) not in users:
+        users.append(str(chat_id))
+        update_config("allowed_users", users)
+        print(f"[config_manager] Added user {chat_id} to allowlist.")
+    return users
+
+
+def remove_allowed_user(chat_id: str) -> list[str]:
+    """Remove a chat_id from allowed_users. Returns updated list."""
+    import os
+    owner = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if str(chat_id) == str(owner):
+        raise ValueError("Cannot remove the bot owner from the allowlist.")
+    config = get_config()
+    users  = [str(u) for u in config.get("allowed_users", []) if str(u) != str(chat_id)]
+    update_config("allowed_users", users)
+    print(f"[config_manager] Removed user {chat_id} from allowlist.")
+    return users
 
 
 # ── Picks storage (for 10:30 AM confirmation run) ────────────────────────────
@@ -176,30 +215,30 @@ def load_weekly_picks() -> dict:
 
 def get_dynamic_pick_counts(config: dict) -> dict:
     """
-    Compute pick counts based on budget so larger budgets get more diversification.
-    Maintains a minimum allocation per pick to keep positions meaningful.
+    Compute pick counts from the two-bucket budgets.
+    If budget is unset, fall back to the config's existing max_*_picks values.
 
-    Thresholds:
-      Stock ST  — min $12/pick, max 5 picks
-      Stock LT  — min $15/pick, max 6 picks
-      Crypto ST — min $10/pick, max 4 picks
-      Crypto LT — min $10/pick, max 4 picks
+    Stock budget split equally between ST and LT:
+      $100 stock → 2 ST + 3 LT (defaults), $200 → up to 4 ST + 5 LT
+    Crypto budget split equally between ST and LT.
 
-    Examples:
-      ST $25  → 2 picks ($12.50 each)
-      ST $50  → 4 picks ($12.50 each)
-      ST $100 → 5 picks (capped)
-      LT $50  → 3 picks ($16.67 each)
-      LT $100 → 6 picks (capped)
+    Min per pick: stocks $12, crypto $10. Max: 5 ST / 6 LT / 4 CST / 4 CLT.
     """
-    def _count(budget: float, min_per_pick: float, max_picks: int) -> int:
-        return max(2, min(max_picks, int(budget / min_per_pick)))
+    def _count(budget: float | None, share: float, min_per_pick: float,
+               max_picks: int, default: int) -> int:
+        if not budget:
+            return default
+        allocated = budget * share   # rough half for ST, half for LT
+        return max(2, min(max_picks, int(allocated / min_per_pick)))
+
+    sb = config.get("stock_budget")
+    cb = config.get("crypto_budget")
 
     return {
-        "max_short_picks":        _count(config.get("short_term_budget",  25), 12.0, 5),
-        "max_long_picks":         _count(config.get("long_term_budget",   50), 15.0, 6),
-        "max_crypto_short_picks": _count(config.get("crypto_short_budget", 20), 10.0, 4),
-        "max_crypto_long_picks":  _count(config.get("crypto_long_budget",  30), 10.0, 4),
+        "max_short_picks":        _count(sb, 0.4, 12.0, 5, config.get("max_short_picks", 2)),
+        "max_long_picks":         _count(sb, 0.6, 15.0, 6, config.get("max_long_picks",  3)),
+        "max_crypto_short_picks": _count(cb, 0.5, 10.0, 4, config.get("max_crypto_short_picks", 2)),
+        "max_crypto_long_picks":  _count(cb, 0.5, 10.0, 4, config.get("max_crypto_long_picks",  2)),
     }
 
 
