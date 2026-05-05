@@ -518,7 +518,15 @@ def run_screener(
             if len(hist) < 30:
                 continue
             current_price = float(hist["Close"].iloc[-1])
-            if pd.isna(current_price):
+            if pd.isna(current_price) or current_price <= 0:
+                continue
+
+            # Sanity-check against 20-day median — catches yfinance split/data glitches
+            # where a single day's close is wildly off (e.g. MU showing $576 instead of $85)
+            median_price = float(hist["Close"].tail(20).median())
+            if median_price > 0 and (current_price > median_price * 3 or current_price < median_price / 3):
+                print(f"[screener] Price sanity fail for {ticker}: "
+                      f"current={current_price:.2f} vs 20d median={median_price:.2f} — skipping.")
                 continue
 
             st_score, st_metrics = _short_term_score(hist)

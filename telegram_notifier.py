@@ -304,31 +304,10 @@ def format_daily_message(picks: dict, config: dict) -> str:
             seen_sectors.add(s)
     sector_line = f"🏭 <i>Sectors: {_esc(', '.join(sector_list))}</i>" if sector_list else ""
 
-    lines += ["", "⚠️ <i>Not financial advice.</i>"]
+    lines += ["", "⚠️ <i>Not financial advice. Send /help for all commands.</i>"]
     if sector_line:
         lines.append(sector_line)
 
-    # Commands — always visible, no expandable wrapper so taps don't fight with collapse
-    lines += [
-        "",
-        "📋 <b>COMMANDS</b>\n"
-        "\n<b>Daily</b>\n"
-        "/today  /prices  /perf  /portfolio  /explain\n"
-        "\n<b>My Trades</b>\n"
-        "/bought  /sold  /cancel\n"
-        "\n<b>Watchlist &amp; Filters</b>\n"
-        "/watch  /exclude  /watchlist\n"
-        "\n<b>Risk &amp; Budgets</b>\n"
-        "/set_risk  /set_st  /set_lt  /set_cst  /set_clt\n"
-        "\n<b>Intelligence</b>\n"
-        "/regime  /backtest\n"
-        "\n<b>Price Alerts</b>\n"
-        "/alert  /alerts  /unalert\n"
-        "\n<b>Paper Trading</b>\n"
-        "/paper_buy  /paper_sell  /paper_portfolio  /paper_perf  /paper_reset\n"
-        "\n<b>Control</b>\n"
-        "/status  /pause  /resume  /reset  /help",
-    ]
     return "\n".join(lines)
 
 
