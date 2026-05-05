@@ -88,6 +88,26 @@ def _build_stock_candidates(screener_results: dict) -> list[dict]:
         if skip:
             continue  # skip the outer loop — drop this candidate entirely
 
+        # Price sanity check — second line of defence after screener.py's check.
+        # Catches stale cache entries with yfinance data glitches (e.g. MU at $576
+        # instead of $85). Fetch a fresh close and compare; drop if >3x or <1/3.
+        raw_price = stock.get("current_price")
+        if raw_price and raw_price > 0:
+            try:
+                import yfinance as yf
+                live = yf.Ticker(ticker).fast_info.get("last_price") or yf.Ticker(ticker).fast_info.get("previous_close")
+                if live and live > 0:
+                    ratio = raw_price / live
+                    if ratio > 3.0 or ratio < 0.33:
+                        print(f"[ai_analyzer] Price sanity fail for {ticker}: "
+                              f"cached={raw_price:.2f} vs live={live:.2f} — dropping candidate.")
+                        skip = True
+            except Exception:
+                pass  # live fetch failed — let candidate through, Claude will handle it
+
+        if skip:
+            continue
+
         entry = {
             "asset_type":    "stock",
             "category":      category,
