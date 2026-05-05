@@ -393,6 +393,13 @@ def run_confirmation():
         print("[agent] No picks found for today — skipping confirmation.")
         return
 
+    # ── Idempotency guard — only send once per day ────────────────────────────
+    # Render retries failed cron runs; without this each retry would re-send
+    today = date.today().isoformat()
+    if picks.get("_confirmation_sent_date") == today:
+        print("[agent] Confirmation already sent today — skipping duplicate.")
+        return
+
     print("[agent] Fetching current prices...")
     try:
         current_prices = get_current_prices(picks)
@@ -508,6 +515,14 @@ def run_confirmation():
     message = format_confirmation_message(picks, current_prices)
     _send_or_print(message, label="10:30 AM Confirmation")
 
+    # Mark as sent so retries don't fire again today
+    if not DRY_RUN:
+        try:
+            picks["_confirmation_sent_date"] = today
+            save_picks(picks)
+        except Exception as exc:
+            print(f"[agent] Could not stamp confirmation sent flag (non-critical): {exc}")
+
 
 # ── Close check (3:30 PM — silent unless a trade closed) ─────────────────────
 
@@ -612,14 +627,27 @@ def run_weekly_recap(config: dict, now_et: datetime):
     # Step 1: Saturday crypto morning picks (markets closed, crypto runs 24/7)
     run_morning(config, now_et)
 
-    # Step 2: Weekly performance recap
+    # Step 2: Weekly performance recap — personalised per user
     print("[agent] Building weekly recap...")
     try:
         from performance_tracker import build_weekly_recap
         recap = build_weekly_recap()
         if recap:
-            message = format_weekly_recap_message(recap)
-            _send_or_print(message, label="Weekly Recap")
+            recipients = _all_recipients()
+            print(f"[agent] Sending personalised weekly recap to {len(recipients)} user(s)...")
+            for uid in recipients:
+                try:
+                    user_cfg = {**config, **get_user_config(uid)}
+                    if user_cfg.get("paused"):
+                        print(f"[agent] Skipping weekly recap for {uid} — picks paused.")
+                        continue
+                    message = format_weekly_recap_message(recap, config=user_cfg)
+                    if DRY_RUN:
+                        print(f"\n{'='*60}\nDRY RUN — Weekly Recap for {uid}:\n{'='*60}\n{message}")
+                    else:
+                        send_message(message, chat_id=uid)
+                except Exception as exc:
+                    print(f"[agent] Weekly recap failed for {uid}: {exc}")
         else:
             print("[agent] No weekly picks data — skipping recap.")
     except Exception as exc:

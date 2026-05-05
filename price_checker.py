@@ -1,12 +1,46 @@
 """
 price_checker.py — Fetch current prices for the 10:30 AM confirmation run.
-Uses yfinance for stocks and CoinGecko for crypto (single bulk call each).
+Uses yfinance for stocks and CoinGecko for crypto (single bulk call each),
+with a yfinance fallback for crypto in case CoinGecko fails or ids are missing.
 """
 
 import requests
 import yfinance as yf
 
 COINGECKO_SIMPLE = "https://api.coingecko.com/api/v3/simple/price"
+
+# Fallback map: crypto symbol → CoinGecko coin id
+# Used when the picks dict doesn't carry an `id` field (e.g. Claude omitted it)
+_SYMBOL_TO_CG_ID = {
+    "BTC":   "bitcoin",
+    "ETH":   "ethereum",
+    "SOL":   "solana",
+    "BNB":   "binancecoin",
+    "XRP":   "ripple",
+    "ADA":   "cardano",
+    "DOGE":  "dogecoin",
+    "AVAX":  "avalanche-2",
+    "DOT":   "polkadot",
+    "MATIC": "matic-network",
+    "LINK":  "chainlink",
+    "UNI":   "uniswap",
+    "ATOM":  "cosmos",
+    "LTC":   "litecoin",
+    "BCH":   "bitcoin-cash",
+    "ALGO":  "algorand",
+    "XLM":   "stellar",
+    "VET":   "vechain",
+    "ICP":   "internet-computer",
+    "FIL":   "filecoin",
+    "HYPE":  "hyperliquid",
+    "SUI":   "sui",
+    "APT":   "aptos",
+    "ARB":   "arbitrum",
+    "OP":    "optimism",
+    "INJ":   "injective-protocol",
+    "TIA":   "celestia",
+    "SEI":   "sei-network",
+}
 
 
 def get_current_prices(picks: dict) -> dict:
@@ -19,7 +53,7 @@ def get_current_prices(picks: dict) -> dict:
     stocks = picks.get("stocks", picks)
     crypto = picks.get("crypto", {})
 
-    # ── Stock prices via yfinance (one call per ticker, fast) ─────────────────
+    # ── Stock prices via yfinance ─────────────────────────────────────────────
     stock_tickers = set()
     for section in ("short_term", "long_term"):
         for s in stocks.get(section, []):
@@ -28,26 +62,43 @@ def get_current_prices(picks: dict) -> dict:
 
     for ticker in stock_tickers:
         try:
-            data = yf.Ticker(ticker).fast_info
+            data  = yf.Ticker(ticker).fast_info
             price = getattr(data, "last_price", None) or getattr(data, "regular_market_price", None)
             if price:
                 prices[ticker] = round(float(price), 2)
         except Exception as exc:
             print(f"[price_checker] Could not fetch {ticker}: {exc}")
 
-    # ── Crypto prices via CoinGecko simple/price (one bulk call) ─────────────
-    # Map symbol → CoinGecko id from the picks
-    symbol_to_id = {}
+    # ── Crypto prices via CoinGecko (one bulk call) ───────────────────────────
+    # Build symbol→id map from picks, filling any gaps with the fallback table
+    crypto_symbols = set()
     for section in ("short_term", "long_term"):
         for c in crypto.get(section, []):
             sym = c.get("symbol", "").upper()
-            cid = c.get("id", "")
-            if sym and cid:
-                symbol_to_id[sym] = cid
+            if sym:
+                crypto_symbols.add(sym)
+
+    symbol_to_id: dict[str, str] = {}
+    for sym in crypto_symbols:
+        # Prefer id from picks (Claude may supply it), else use fallback table
+        cid = ""
+        for section in ("short_term", "long_term"):
+            for c in crypto.get(section, []):
+                if c.get("symbol", "").upper() == sym and c.get("id"):
+                    cid = c["id"]
+                    break
+            if cid:
+                break
+        if not cid:
+            cid = _SYMBOL_TO_CG_ID.get(sym, "")
+        if cid:
+            symbol_to_id[sym] = cid
+        else:
+            print(f"[price_checker] No CoinGecko id for {sym} — will try yfinance fallback.")
 
     if symbol_to_id:
         try:
-            ids = ",".join(symbol_to_id.values())
+            ids  = ",".join(symbol_to_id.values())
             resp = requests.get(
                 COINGECKO_SIMPLE,
                 params={"ids": ids, "vs_currencies": "usd"},
@@ -59,8 +110,25 @@ def get_current_prices(picks: dict) -> dict:
                 price = data.get(cid, {}).get("usd")
                 if price:
                     prices[sym] = float(price)
+                    crypto_symbols.discard(sym)   # mark as resolved
+            print(f"[price_checker] CoinGecko returned prices for: {list(symbol_to_id.keys())}")
         except Exception as exc:
-            print(f"[price_checker] Could not fetch crypto prices: {exc}")
+            print(f"[price_checker] CoinGecko call failed ({exc}) — falling back to yfinance for all crypto.")
+
+    # ── yfinance fallback for any crypto still missing a price ────────────────
+    still_missing = [s for s in crypto_symbols if s not in prices]
+    for sym in still_missing:
+        try:
+            yf_ticker = f"{sym}-USD"
+            data  = yf.Ticker(yf_ticker).fast_info
+            price = getattr(data, "last_price", None) or getattr(data, "regular_market_price", None)
+            if price:
+                prices[sym] = round(float(price), 2)
+                print(f"[price_checker] yfinance fallback: {sym} = ${price:.2f}")
+            else:
+                print(f"[price_checker] yfinance also returned no price for {sym}.")
+        except Exception as exc:
+            print(f"[price_checker] yfinance fallback failed for {sym}: {exc}")
 
     print(f"[price_checker] Current prices: {prices}")
     return prices

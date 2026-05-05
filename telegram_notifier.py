@@ -5,10 +5,8 @@ Replaces whatsapp.py. Uses Telegram Bot API via plain requests (no heavy SDK).
 
 import os
 import time
-import html
 import threading
 import requests
-from datetime import date
 
 from config_manager import (
     get_config, update_config, update_config_multi,
@@ -17,11 +15,10 @@ from config_manager import (
     load_pending_state, save_pending_state, clear_pending_state,
     load_user_trade_log,
 )
-
-
-def _esc(text) -> str:
-    """HTML-escape dynamic content so <, >, & don't break Telegram's parser."""
-    return html.escape(str(text)) if text else ""
+from formatters import (
+    _esc, _stars, _p, _upside, _short_company,
+    format_daily_message, format_confirmation_message, format_weekly_recap_message,
+)
 
 
 def _is_number(s: str) -> bool:
@@ -203,327 +200,6 @@ def set_webhook(webhook_url: str) -> bool:
         return True
     print(f"[telegram] Failed to set webhook: {data}")
     return False
-
-
-# ── Format daily message ──────────────────────────────────────────────────────
-
-def _stars(conviction: int) -> str:
-    c = max(1, min(5, int(conviction)))
-    return "★" * c + "☆" * (5 - c)
-
-
-def _p(price) -> str:
-    """Format a price cleanly: strip .00 only, commas for thousands."""
-    if price is None:
-        return "—"
-    f = float(price)
-    if f >= 1000:
-        # 65000 → 65,000  |  65432.5 → 65,432.50
-        return f"{f:,.0f}" if f == int(f) else f"{f:,.2f}"
-    # 478.14 → 478.14  |  495.00 → 495  |  244.30 → 244.30
-    s = f"{f:.2f}"
-    return s[:-3] if s.endswith(".00") else s
-
-
-def _upside(entry, target) -> str:
-    """Return (+X.X%) or (-X.X%) string."""
-    try:
-        pct = (float(target) - float(entry)) / float(entry) * 100
-        sign = "+" if pct >= 0 else ""
-        return f"{sign}{pct:.1f}%"
-    except Exception:
-        return ""
-
-
-def _short_company(name: str, max_len: int = 22) -> str:
-    """Trim long company names at a word boundary so lines stay compact."""
-    if not name:
-        return ""
-    # Strip common suffixes first to save characters
-    for suffix in (", Inc.", " Inc.", " Corp.", " Corporation", " & Co.", " Co.", " Ltd.", " plc"):
-        if name.endswith(suffix):
-            name = name[: -len(suffix)]
-            break
-    return name if len(name) <= max_len else name[:max_len].rsplit(" ", 1)[0] + "…"
-
-
-def format_daily_message(picks: dict, config: dict) -> str:
-    """Build the formatted daily Telegram message from Claude picks (stocks + crypto)."""
-    today            = date.today().strftime("%a %b %d, %Y")
-    stock_budget  = config.get("stock_budget")   # None = unset
-    crypto_budget = config.get("crypto_budget")  # None = unset
-    pick_mode     = config.get("pick_mode", "both")   # "st" | "lt" | "both"
-
-    # Compute equal per-pick amounts (same logic as ai_analyzer)
-    max_stock_picks  = config.get("max_short_picks", 2) + config.get("max_long_picks", 3)
-    max_crypto_picks = config.get("max_crypto_short_picks", 2) + config.get("max_crypto_long_picks", 2)
-    per_stock  = round(float(stock_budget)  / max(max_stock_picks,  1), 2) if stock_budget  else None
-    per_crypto = round(float(crypto_budget) / max(max_crypto_picks, 1), 2) if crypto_budget else None
-
-    show_st = pick_mode in ("st", "both")
-    show_lt = pick_mode in ("lt", "both")
-
-    stocks    = picks.get("stocks", picks)
-    crypto    = picks.get("crypto", {})
-    st_picks  = stocks.get("short_term", []) if show_st else []
-    lt_picks  = stocks.get("long_term", [])  if show_lt else []
-    cst_picks = crypto.get("short_term", []) if show_st else []
-    clt_picks = crypto.get("long_term", [])  if show_lt else []
-
-    # Apply per-user pick caps
-    max_s = config.get("max_stock_picks")
-    max_c = config.get("max_crypto_picks")
-    if max_s is not None and max_s > 0:
-        if show_st and show_lt:
-            n_st = max(1, round(max_s * 0.4))
-            n_lt = max(0, max_s - n_st)
-        elif show_st:
-            n_st, n_lt = max_s, 0
-        else:
-            n_st, n_lt = 0, max_s
-        st_picks = st_picks[:n_st]
-        lt_picks = lt_picks[:n_lt]
-    if max_c is not None and max_c > 0:
-        if show_st and show_lt:
-            n_cst = max(1, round(max_c * 0.5))
-            n_clt = max(0, max_c - n_cst)
-        elif show_st:
-            n_cst, n_clt = max_c, 0
-        else:
-            n_cst, n_clt = 0, max_c
-        cst_picks = cst_picks[:n_cst]
-        clt_picks = clt_picks[:n_clt]
-
-    # ── Macro context line ────────────────────────────────────────────────────
-    macro_parts = []
-    m = picks.get("macro_context", {})
-    if m.get("spy_pct") is not None:
-        sign = "+" if m["spy_pct"] >= 0 else ""
-        macro_parts.append(f"SPY {sign}{m['spy_pct']}%")
-    if m.get("tnx_yield") is not None:
-        macro_parts.append(f"10Y {m['tnx_yield']}%")
-    if m.get("vix") is not None:
-        macro_parts.append(f"VIX {m['vix']}")
-    macro_line = f"📉 <b>Macro:</b> {' · '.join(macro_parts)}" if macro_parts else ""
-
-    lines = [
-        f"<b>📊 Daily Picks — {today}</b>",
-        f"<i>{_esc(picks.get('daily_summary', ''))}</i>",
-    ]
-    if macro_line:
-        lines.append(macro_line)
-
-    def _pick_row_st(i, s):
-        entry, target, stop = s.get("entry_price"), s.get("target_price"), s.get("stop_loss")
-        earnings_tag = f"  🗓 {_esc(s['earnings_date'])}" if s.get("earnings_date") else ""
-        alloc = s.get("allocation")
-        alloc_str = f"  <code>${_p(alloc)}</code>" if alloc is not None else ""
-        return (
-            f"<b>{_esc(s.get('ticker'))}</b>  {_stars(s.get('conviction', 3))}  "
-            f"<i>{_esc(_short_company(s.get('company', '')))}</i>{earnings_tag}\n"
-            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
-            f"<i>{_upside(entry, target)}</i>  ·  stop <code>${_p(stop)}</code>{alloc_str}\n"
-            f"<i>{_esc(s.get('thesis'))}</i>"
-        )
-
-    def _pick_row_lt(i, s):
-        entry, target = s.get("entry_price"), s.get("target_price")
-        alloc = s.get("allocation")
-        alloc_str = f"  <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
-        return (
-            f"<b>{_esc(s.get('ticker'))}</b>  {_stars(s.get('conviction', 3))}  "
-            f"<i>{_esc(_short_company(s.get('company', '')))}</i>\n"
-            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
-            f"<i>{_upside(entry, target)}</i>  ·  {_esc(s.get('horizon'))}{alloc_str}\n"
-            f"<i>{_esc(s.get('thesis'))}</i>"
-        )
-
-    def _pick_row_cst(i, c):
-        entry, target, stop = c.get("entry_price"), c.get("target_price"), c.get("stop_loss")
-        alloc = c.get("allocation")
-        alloc_str = f"  <code>${_p(alloc)}</code>" if alloc is not None else ""
-        return (
-            f"<b>{_esc(c.get('symbol'))}</b>  {_stars(c.get('conviction', 3))}  "
-            f"<i>{_esc(_short_company(c.get('name', '')))}</i>\n"
-            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
-            f"<i>{_upside(entry, target)}</i>  ·  stop <code>${_p(stop)}</code>{alloc_str}\n"
-            f"<i>{_esc(c.get('thesis'))}</i>"
-        )
-
-    def _pick_row_clt(i, c):
-        entry, target = c.get("entry_price"), c.get("target_price")
-        alloc = c.get("allocation")
-        alloc_str = f"  <code>${_p(alloc)}/mo</code>" if alloc is not None else ""
-        return (
-            f"<b>{_esc(c.get('symbol'))}</b>  {_stars(c.get('conviction', 3))}  "
-            f"<i>{_esc(_short_company(c.get('name', '')))}</i>\n"
-            f"<code>${_p(entry)}</code> → <code>${_p(target)}</code>  "
-            f"<i>{_upside(entry, target)}</i>  ·  {_esc(c.get('horizon'))}{alloc_str}\n"
-            f"<i>{_esc(c.get('thesis'))}</i>"
-        )
-
-    # ── Short-term stocks ─────────────────────────────────────────────────────
-    if st_picks:
-        budget_tag = f"  <code>${per_stock}/pick</code>" if per_stock else ""
-        body = "\n\n".join(_pick_row_st(i, s) for i, s in enumerate(st_picks, 1))
-        lines += [
-            "",
-            f"<blockquote expandable>📈 <b>STOCK — SHORT TERM</b>{budget_tag}\n\n{body}</blockquote>",
-        ]
-
-    # ── Long-term stocks ──────────────────────────────────────────────────────
-    if lt_picks:
-        budget_tag = f"  <code>${per_stock}/pick</code>" if per_stock else ""
-        body = "\n\n".join(_pick_row_lt(i, s) for i, s in enumerate(lt_picks, 1))
-        lines += [
-            "",
-            f"<blockquote expandable>🏦 <b>STOCK — LONG TERM</b>{budget_tag}\n\n{body}</blockquote>",
-        ]
-
-    # ── Crypto short-term ─────────────────────────────────────────────────────
-    if cst_picks:
-        budget_tag = f"  <code>${per_crypto}/pick</code>" if per_crypto else ""
-        body = "\n\n".join(_pick_row_cst(i, c) for i, c in enumerate(cst_picks, 1))
-        lines += [
-            "",
-            f"<blockquote expandable>🪙 <b>CRYPTO — SHORT TERM</b>{budget_tag}  ⚡ HIGH RISK\n\n{body}</blockquote>",
-        ]
-
-    # ── Crypto long-term ──────────────────────────────────────────────────────
-    if clt_picks:
-        budget_tag = f"  <code>${per_crypto}/pick</code>" if per_crypto else ""
-        body = "\n\n".join(_pick_row_clt(i, c) for i, c in enumerate(clt_picks, 1))
-        lines += [
-            "",
-            f"<blockquote expandable>💎 <b>CRYPTO — LONG TERM</b>{budget_tag}\n\n{body}</blockquote>",
-        ]
-
-    # ── Footer ────────────────────────────────────────────────────────────────
-    seen_sectors: set = set()
-    sector_list: list = []
-    for p in st_picks + lt_picks:
-        s = p.get("sector", "")
-        if s and s != "Unknown" and s not in seen_sectors:
-            sector_list.append(s)
-            seen_sectors.add(s)
-    sector_line = f"🏭 <i>Sectors: {_esc(', '.join(sector_list))}</i>" if sector_list else ""
-
-    lines += ["", "⚠️ <i>Not financial advice.</i>  📋 /help  ·  📲 /share"]
-    if sector_line:
-        lines.append(sector_line)
-
-    return "\n".join(lines)
-
-
-# ── Confirmation message (10:30 AM run) ──────────────────────────────────────
-
-def format_confirmation_message(picks: dict, current_prices: dict) -> str:
-    """
-    Build the 10:30 AM check-in message.
-    Compares entry prices from morning picks to current live prices.
-    """
-    now    = date.today().strftime("%a %b %d")
-    stocks = picks.get("stocks", picks)
-    crypto = picks.get("crypto", {})
-
-    def price_line(symbol: str, entry, target, stop) -> str:
-        current = current_prices.get(symbol)
-        if current is None or entry is None:
-            return f"   <b>{symbol}</b>  price unavailable"
-        pct   = (current - float(entry)) / float(entry) * 100
-        arrow = "▲" if pct >= 0 else "▼"
-        sign  = ""   # arrow already implies direction
-        if stop and current <= float(stop):
-            badge = "🔴 STOP HIT"
-        elif target and pct >= (float(target) - float(entry)) / float(entry) * 100 * 0.5:
-            badge = "✅ On track"
-        elif pct < -2:
-            badge = "⚠️ Watch"
-        else:
-            badge = "🟡 Neutral"
-        return (f"   <b>{symbol}</b>  <code>${_p(entry)}</code> → <code>${_p(current)}</code> "
-                f"{arrow}{sign}{abs(pct):.1f}%  {badge}")
-
-    st = stocks.get("short_term", [])
-    lt = stocks.get("long_term", [])
-    cst = crypto.get("short_term", [])
-    clt = crypto.get("long_term", [])
-
-    lines = [f"<b>🕙 10:30 AM Check — {now}</b>"]
-
-    if st:
-        lines += ["", "<b>📈 Short Term</b>"]
-        for s in st:
-            lines.append(price_line(s.get("ticker", ""), s.get("entry_price"), s.get("target_price"), s.get("stop_loss")))
-
-    if lt:
-        lines += ["", "<b>🏦 Long Term</b>"]
-        for s in lt:
-            lines.append(price_line(s.get("ticker", ""), s.get("entry_price"), s.get("target_price"), None))
-
-    if cst:
-        lines += ["", "<b>🪙 Crypto Short Term</b>"]
-        for c in cst:
-            lines.append(price_line(c.get("symbol", ""), c.get("entry_price"), c.get("target_price"), c.get("stop_loss")))
-
-    if clt:
-        lines += ["", "<b>💎 Crypto Long Term</b>"]
-        for c in clt:
-            lines.append(price_line(c.get("symbol", ""), c.get("entry_price"), c.get("target_price"), None))
-
-    lines += ["", "🔴 exit  ✅ hold  ⚠️ watch  🟡 wait", "<i>⚠️ Not financial advice.</i>"]
-    return "\n".join(lines)
-
-
-# ── Weekly recap (Saturday morning) ──────────────────────────────────────────
-
-def format_weekly_recap_message(recap: dict) -> str:
-    """
-    Compact Saturday recap. recap comes from performance_tracker.build_weekly_recap().
-    Keeps it to ~12 lines — wins, avg return vs S&P, best/worst pick.
-    """
-    from datetime import date
-    week_end = date.today().strftime("%b %d")
-
-    def _section(label: str, stats: dict | None, spy: float | None = None) -> list[str]:
-        if not stats:
-            return [f"{label}: no data this week"]
-        win_pct = int(stats["wins"] / stats["count"] * 100)
-        avg     = stats["avg_return"]
-        sign    = "+" if avg >= 0 else ""
-        emoji   = "🟢" if avg > 0 else ("🔴" if avg < -1 else "🟡")
-
-        best_sym,  best_r  = stats["best"]
-        worst_sym, worst_r = stats["worst"]
-        best_sign  = "+" if best_r  >= 0 else ""
-        worst_sign = "+" if worst_r >= 0 else ""
-
-        bench = ""
-        if spy is not None:
-            vs      = round(avg - spy, 1)
-            vs_sign = "+" if vs >= 0 else ""
-            spy_sign = "+" if spy >= 0 else ""
-            bench = f" vs S&P {spy_sign}{spy}% ({vs_sign}{vs}%)"
-
-        return [
-            f"<b>{label}</b> — {stats['count']} picks, {win_pct}% wins",
-            f"Best: <b>{best_sym}</b> {best_sign}{best_r}%  Worst: <b>{worst_sym}</b> {worst_sign}{worst_r}%",
-            f"Avg: {sign}{avg}%{bench} {emoji}",
-        ]
-
-    lines = [
-        f"<b>📅 Week of {week_end} — Recap</b>",
-        "",
-    ]
-    lines += _section("📈 Stocks", recap.get("stocks"), recap.get("spy_return"))
-    lines += [""]
-    lines += _section("🪙 Crypto", recap.get("crypto"))
-    lines += [
-        "",
-        "<i>Entry vs Friday close — not actual trade results.</i>",
-        "<i>⚠️ Not financial advice.</i>",
-    ]
-    return "\n".join(lines)
 
 
 # ── Command handler ───────────────────────────────────────────────────────────
@@ -1232,6 +908,7 @@ Available intents and their exact JSON format:
 {"intent": "pause"}
 {"intent": "resume"}
 {"intent": "status"}
+{"intent": "settings"}
 {"intent": "today"}
 {"intent": "prices"}
 {"intent": "perf"}
@@ -1248,6 +925,8 @@ Rules:
 - Map "set/change/increase budget" → set_budget with stock_budget and/or crypto_budget numeric values
 - Map "show me N stocks/picks", "limit/reduce picks", "only N crypto" → set_picks
 - Map "change stop loss", "tighten/widen stop", "set target gain", "adjust thresholds" → set_thresholds with numeric values
+- Map "my settings", "show all settings", "full settings", "what are my settings" → settings
+- Map "status", "am I paused", "is bot running" → status
 - "stocks 200 crypto 50" → {"stock_budget": 200, "crypto_budget": 50}
 - "stock budget 150" → {"stock_budget": 150}
 - "clear budgets" → {"stock_budget": null, "crypto_budget": null}
@@ -1314,6 +993,8 @@ Rules:
         return _parse_and_execute("RESUME", original=query, chat_id=chat_id)
     if intent == "status":
         return _parse_and_execute("STATUS", original=query, chat_id=chat_id)
+    if intent == "settings":
+        return _parse_and_execute("SETTINGS", original=query, chat_id=chat_id)
     if intent == "today":
         return _parse_and_execute("TODAY", original=query, chat_id=chat_id)
     if intent == "prices":
@@ -1674,11 +1355,12 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/paper_portfolio  ·  /paper_perf"
             "\n/paper_reset  ·  /paper_add_cash\n"
             "\n<b>Control</b>"
-            "\n/pause  ·  /resume  ·  /status  ·  /reset  ·  /help"
-            "\n/share  <i>(invite link)</i>"
+            "\n/pause  ·  /resume  ·  /status  ·  /settings"
+            "\n/reset  ·  /help  ·  /share  <i>(invite link)</i>"
             "\n/users  ·  /adduser  ·  /removeuser  <i>(admin)</i>"
+            "\n/admin_perf  <i>(admin — all-user performance)</i>"
             "\n/bot_pause  ·  /bot_resume  <i>(admin — global kill switch)</i>"
-            "\n/bot_crypto_on  ·  /bot_crypto_off  <i>(admin — crypto analysis toggle)</i>"
+            "\n/bot_crypto_on  ·  /bot_crypto_off  <i>(admin — crypto toggle)</i>"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -1857,6 +1539,28 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         lines.append(f"\n<i>{len(users)} user(s) total</i>")
         return "\n".join(lines)
 
+    # ── /admin_perf — aggregate performance across all users (admin-only) ─────
+    if text == "ADMIN PERF":
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        from trade_logger import get_performance_stats
+        from config_manager import get_allowed_users
+        users = get_allowed_users()
+        lines = ["<b>👥 All-User Performance</b>\n"]
+        for uid in users:
+            s = get_performance_stats(uid)
+            tag = " <i>(you)</i>" if uid == str(os.environ.get("TELEGRAM_CHAT_ID", "")) else ""
+            if not s:
+                lines.append(f"<code>{uid}</code>{tag}: no closed trades")
+            else:
+                sign = "+" if s["avg_return"] >= 0 else ""
+                lines.append(
+                    f"<code>{uid}</code>{tag}\n"
+                    f"  {s['count']} trades · {s['win_rate']}% wins · "
+                    f"avg {sign}{s['avg_return']}% · P&L ${s['total_gain_usd']:+.2f}"
+                )
+        return "\n".join(lines)
+
     # ── /pause /resume (per-user) ─────────────────────────────────────────────
     if text == "PAUSE":
         update_user_config(chat_id, "paused", True)
@@ -1896,8 +1600,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
     if text == "SET THRESHOLDS":
         user_cfg   = get_user_config(chat_id)
         global_cfg = get_config()
-        sl  = user_cfg.get("stop_loss_pct")   or global_cfg.get("stop_loss_pct",   5)
-        tg  = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 8)
+        sl  = user_cfg.get("stop_loss_pct")   or global_cfg.get("stop_loss_pct",   7)
+        tg  = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 15)
         sl_src = "" if user_cfg.get("stop_loss_pct")   else " (global default)"
         tg_src = "" if user_cfg.get("target_gain_pct") else " (global default)"
         return (
@@ -1905,10 +1609,11 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             f"Stop loss:   <b>{sl}%</b>{sl_src}\n"
             f"Target gain: <b>{tg}%</b>{tg_src}\n\n"
             f"<i>To change:</i>\n"
-            f"/set_thresholds stop 7 target 12\n"
+            f"/set_thresholds stop 7 target 15\n"
             f"/set_thresholds stop 5\n"
-            f"/set_thresholds target 10\n"
-            f"/set_thresholds reset  — restore global defaults"
+            f"/set_thresholds target 12\n"
+            f"/set_thresholds reset  — restore global defaults\n\n"
+            f"<i>Note: applies to trades you log via /bought. Morning pick stops are set by Claude based on technical levels.</i>"
         )
 
     if text.startswith("SET THRESHOLDS "):
@@ -1918,8 +1623,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         if raw in ("reset", "off", "default", "clear", "none"):
             update_user_config_multi(chat_id, {"stop_loss_pct": None, "target_gain_pct": None})
             global_cfg = get_config()
-            sl = global_cfg.get("stop_loss_pct", 5)
-            tg = global_cfg.get("target_gain_pct", 8)
+            sl = global_cfg.get("stop_loss_pct", 7)
+            tg = global_cfg.get("target_gain_pct", 15)
             return f"✅ Thresholds reset to global defaults — stop <b>{sl}%</b>, target <b>{tg}%</b>."
 
         updates = {}
@@ -1978,26 +1683,36 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         )
 
     if text == "STATUS":
+        global_cfg    = get_config()
+        user_cfg      = get_user_config(chat_id)
+        bot_status    = "✅ Active" if global_cfg.get("enabled") else "⏸ Paused (admin)"
+        pick_status   = "⏸ Paused" if user_cfg.get("paused") else "✅ Active"
+        crypto_status = "✅ On" if global_cfg.get("crypto_enabled", True) else "⏸ Off (admin)"
+        return (
+            f"<b>⚙️ Status</b>\n"
+            f"Your picks:      {pick_status}\n"
+            f"Bot:             {bot_status}\n"
+            f"Crypto analysis: {crypto_status}\n"
+            f"Risk profile:    {user_cfg.get('risk_profile', 'moderate')}\n"
+            f"Pick mode:       {user_cfg.get('pick_mode', 'both')}\n\n"
+            f"<i>For full settings: /settings</i>"
+        )
+
+    if text == "SETTINGS":
         global_cfg = get_config()
         user_cfg   = get_user_config(chat_id)
-        bot_status    = "✅ Active" if global_cfg.get("enabled") else "⏸ Bot paused (admin)"
-        pick_status   = "⏸ Your picks paused" if user_cfg.get("paused") else "✅ Receiving picks"
-        crypto_status = "✅ Enabled" if global_cfg.get("crypto_enabled", True) else "⏸ Disabled (admin)"
-        wl = user_cfg.get("watchlist", [])
-        ex = user_cfg.get("excluded_sectors", [])
-        sl_pct = user_cfg.get("stop_loss_pct") or global_cfg.get("stop_loss_pct", 5)
-        tg_pct = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 8)
-        sl_src = "" if user_cfg.get("stop_loss_pct") else " (default)"
+        wl  = user_cfg.get("watchlist", [])
+        ex  = user_cfg.get("excluded_sectors", [])
+        sl_pct = user_cfg.get("stop_loss_pct")   or global_cfg.get("stop_loss_pct",   7)
+        tg_pct = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 15)
+        sl_src = "" if user_cfg.get("stop_loss_pct")   else " (default)"
         tg_src = "" if user_cfg.get("target_gain_pct") else " (default)"
         return (
             f"<b>⚙️ Your Settings</b>\n"
-            f"Picks:            {pick_status}\n"
-            f"Bot:              {bot_status}\n"
-            f"Crypto analysis:  {crypto_status}\n"
-            f"Stock budget:     {('$'+str(user_cfg.get('stock_budget'))) if user_cfg.get('stock_budget') else 'not set'}\n"
-            f"Crypto budget:    {('$'+str(user_cfg.get('crypto_budget'))) if user_cfg.get('crypto_budget') else 'not set'}\n"
             f"Risk profile:     {user_cfg.get('risk_profile', 'moderate')}\n"
             f"Pick mode:        {user_cfg.get('pick_mode', 'both')}\n"
+            f"Stock budget:     {('$'+str(user_cfg.get('stock_budget'))) if user_cfg.get('stock_budget') else 'not set'}\n"
+            f"Crypto budget:    {('$'+str(user_cfg.get('crypto_budget'))) if user_cfg.get('crypto_budget') else 'not set'}\n"
             f"Stock picks:      {user_cfg.get('max_stock_picks') or 'all'}\n"
             f"Crypto picks:     {user_cfg.get('max_crypto_picks') or 'all'}\n"
             f"Stop loss:        {sl_pct}%{sl_src}\n"
@@ -2142,12 +1857,21 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 "/set_picks off"
             )
 
-        config = update_user_config_multi(chat_id, updates)
+        update_user_config_multi(chat_id, updates)
+        user_cfg = get_user_config(chat_id)
+        pick_mode = user_cfg.get("pick_mode", "both")
         lines = ["✅ <b>Pick limits updated:</b>"]
         if "max_stock_picks" in updates:
-            lines.append(f"Stocks → max <b>{updates['max_stock_picks']}</b> picks")
+            n = updates["max_stock_picks"]
+            lines.append(f"Stocks → max <b>{n}</b> picks")
+            # Warn if the 40/60 split would drop LT entirely
+            if n == 1 and pick_mode == "both":
+                lines.append("<i>⚠️ With stocks=1 and mode=both, long-term stock picks will be hidden (40/60 split rounds to 1 ST + 0 LT). Use /mode st to show only short-term, or set stocks ≥ 2.</i>")
         if "max_crypto_picks" in updates:
-            lines.append(f"Crypto → max <b>{updates['max_crypto_picks']}</b> picks")
+            n = updates["max_crypto_picks"]
+            lines.append(f"Crypto → max <b>{n}</b> picks")
+            if n == 1 and pick_mode == "both":
+                lines.append("<i>⚠️ With crypto=1 and mode=both, long-term crypto picks will be hidden (50/50 split rounds to 1 ST + 0 LT).</i>")
         lines.append("<i>Takes effect on tomorrow's briefing.</i>")
         return "\n".join(lines)
 
