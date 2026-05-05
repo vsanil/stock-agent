@@ -260,7 +260,7 @@ def format_confirmation_message(picks: dict, current_prices: dict) -> str:
         for c in clt:
             lines.append(price_line(c.get("symbol", ""), c.get("entry_price"), c.get("target_price"), None))
 
-    lines += ["", "🔴 exit  ✅ hold  ⚠️ watch  🟡 wait", "<i>⚠️ Not financial advice.</i>"]
+    lines += ["", "🔴 exit  ✅ hold  ⚠️ watch  🟡 wait", "<i>⚠️ Not financial advice.</i>  📋 /help  ·  📲 /share"]
     return "\n".join(lines)
 
 
