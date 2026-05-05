@@ -24,7 +24,7 @@ from config_manager import (
     get_dynamic_pick_counts, load_trade_log,
     save_screener_cache, load_screener_cache,
 )
-from trade_logger import open_trades, check_and_close_trades, update_trailing_stops
+from trade_logger import check_and_close_trades, update_trailing_stops
 from price_alert_manager import check_all_alerts
 from screener import run_screener
 from crypto_screener import run_crypto_screener
@@ -372,11 +372,9 @@ def run_morning(config: dict, now_et: datetime):
         except Exception as exc:
             print(f"[agent] Weekly picks save failed (non-critical): {exc}")
 
-    # Open new trades in the trade log
-    try:
-        open_trades(picks)
-    except Exception as exc:
-        print(f"[agent] Trade log open failed (non-critical): {exc}")
+    # NOTE: open_trades() is intentionally NOT called here.
+    # /positions and /perf only reflect trades the user explicitly logs via /bought.
+    # Auto-logging bot picks caused /positions to show positions the user never placed.
 
     message = format_daily_message(picks, config)
     _send_or_print(message, label="8:00 AM Morning Briefing")
