@@ -1,9 +1,10 @@
 """
 paper_trader.py — Simulated paper trading portfolio stored in GitHub Gist.
+Per-user: each user has their own paper portfolio, keyed by chat_id.
 
 Paper trades let you test the bot's picks without risking real money.
 All commands mirror the real /bought /sold /portfolio flow but work on
-a separate paper_portfolio.json file.
+a separate per-user paper portfolio stored in user_paper.json.
 
 Telegram commands:
   /paper_buy AAPL 10        → simulate buying 10 shares of AAPL at live price
@@ -11,29 +12,13 @@ Telegram commands:
   /paper_sell AAPL          → simulate selling entire AAPL position at live price
   /paper_portfolio          → show current paper portfolio + unrealized P&L
   /paper_perf               → show paper trading win rate, total return
+  /paper_add_cash 5000      → add cash to paper portfolio
   /paper_reset              → wipe paper portfolio (start over)
 """
 
 from datetime import date
 import yfinance as yf
-from config_manager import _load_gist_file, _write_gist_file
-
-PAPER_FILE = "paper_portfolio.json"
-
-
-# ── Internal helpers ───────────────────────────────────────────────────────────
-
-def _load() -> dict:
-    data = _load_gist_file(PAPER_FILE) or {}
-    data.setdefault("positions", [])    # open positions
-    data.setdefault("history",   [])    # closed trades
-    data.setdefault("starting_cash", 10_000.0)
-    data.setdefault("cash",          data["starting_cash"])
-    return data
-
-
-def _save(data: dict) -> None:
-    _write_gist_file(PAPER_FILE, data)
+from config_manager import load_user_paper, save_user_paper
 
 
 def _live_price(ticker: str) -> float | None:
@@ -45,8 +30,8 @@ def _live_price(ticker: str) -> float | None:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def paper_buy(ticker: str, shares: float, price: float | None = None) -> str:
-    """Simulate buying shares. Returns Telegram-formatted confirmation."""
+def paper_buy(ticker: str, shares: float, chat_id: str, price: float | None = None) -> str:
+    """Simulate buying shares for a user. Returns Telegram-formatted confirmation."""
     ticker = ticker.upper()
     live   = _live_price(ticker)
     if live is None:
@@ -55,7 +40,7 @@ def paper_buy(ticker: str, shares: float, price: float | None = None) -> str:
     buy_price = price if price else live
     cost      = round(buy_price * shares, 2)
 
-    data = _load()
+    data = load_user_paper(chat_id)
     if cost > data["cash"]:
         return (f"❌ Insufficient paper cash.\n"
                 f"Need ${cost:,.2f}, have ${data['cash']:,.2f}")
@@ -79,7 +64,7 @@ def paper_buy(ticker: str, shares: float, price: float | None = None) -> str:
         })
 
     data["cash"] = round(data["cash"] - cost, 2)
-    _save(data)
+    save_user_paper(chat_id, data)
 
     return (
         f"📄 <b>Paper Buy</b>\n"
@@ -89,15 +74,16 @@ def paper_buy(ticker: str, shares: float, price: float | None = None) -> str:
     )
 
 
-def paper_sell(ticker: str, shares: float | None = None, price: float | None = None) -> str:
-    """Simulate selling. If shares=None, sells entire position."""
+def paper_sell(ticker: str, chat_id: str, shares: float | None = None,
+               price: float | None = None) -> str:
+    """Simulate selling for a user. If shares=None, sells entire position."""
     ticker = ticker.upper()
     live   = _live_price(ticker)
     if live is None:
         return f"❌ Could not fetch price for <b>{ticker}</b>."
 
     sell_price = price if price else live
-    data       = _load()
+    data       = load_user_paper(chat_id)
     position   = next((p for p in data["positions"] if p["ticker"] == ticker), None)
 
     if not position:
@@ -132,7 +118,7 @@ def paper_sell(ticker: str, shares: float | None = None, price: float | None = N
         position["cost_basis"] = round(position["avg_price"] * remaining, 2)
 
     data["cash"] = round(data["cash"] + proceeds, 2)
-    _save(data)
+    save_user_paper(chat_id, data)
 
     emoji = "✅" if gain >= 0 else "❌"
     return (
@@ -143,9 +129,9 @@ def paper_sell(ticker: str, shares: float | None = None, price: float | None = N
     )
 
 
-def paper_portfolio() -> str:
-    """Show current paper portfolio with unrealized P&L."""
-    data      = _load()
+def paper_portfolio(chat_id: str) -> str:
+    """Show a user's current paper portfolio with unrealized P&L."""
+    data      = load_user_paper(chat_id)
     positions = data["positions"]
 
     if not positions:
@@ -195,9 +181,9 @@ def paper_portfolio() -> str:
     return "\n".join(lines)
 
 
-def paper_performance() -> str:
-    """Show paper trading win rate and P&L stats from closed trades."""
-    data    = _load()
+def paper_performance(chat_id: str) -> str:
+    """Show paper trading win rate and P&L stats from a user's closed trades."""
+    data    = load_user_paper(chat_id)
     history = data["history"]
 
     if not history:
@@ -233,14 +219,14 @@ def paper_performance() -> str:
     )
 
 
-def paper_add_cash(amount: float) -> str:
-    """Add cash to the paper portfolio (and increase starting_cash baseline)."""
+def paper_add_cash(amount: float, chat_id: str) -> str:
+    """Add cash to a user's paper portfolio (and increase starting_cash baseline)."""
     if amount <= 0:
         return "❌ Amount must be greater than zero."
-    data = _load()
+    data = load_user_paper(chat_id)
     data["cash"]          = round(data["cash"] + amount, 2)
     data["starting_cash"] = round(data["starting_cash"] + amount, 2)
-    _save(data)
+    save_user_paper(chat_id, data)
     return (
         f"💵 <b>Cash Added</b>\n"
         f"Added: <b>${amount:,.2f}</b>\n"
@@ -249,9 +235,9 @@ def paper_add_cash(amount: float) -> str:
     )
 
 
-def paper_reset(starting_cash: float | None = None) -> str:
-    """Wipe paper portfolio and start fresh with the given cash (or keep existing amount)."""
-    current = _load()
+def paper_reset(chat_id: str, starting_cash: float | None = None) -> str:
+    """Wipe a user's paper portfolio and start fresh with the given cash (or keep existing amount)."""
+    current = load_user_paper(chat_id)
     amount  = starting_cash if starting_cash is not None else current.get("starting_cash", 10_000.0)
-    _save({"positions": [], "history": [], "starting_cash": amount, "cash": amount})
+    save_user_paper(chat_id, {"positions": [], "history": [], "starting_cash": amount, "cash": amount})
     return f"🔄 Paper portfolio reset. Starting cash: <b>${amount:,.2f}</b>"

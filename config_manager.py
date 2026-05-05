@@ -8,40 +8,47 @@ import json
 import requests
 
 # ── Default config ────────────────────────────────────────────────────────────
+# ── Global bot config (shared across all users) ───────────────────────────────
 DEFAULT_CONFIG = {
-    # Budgets — null means unset (no allocation shown in picks)
-    "stock_budget":  None,   # total daily $ for stocks, split equally across all stock picks
-    "crypto_budget": None,   # total daily $ for crypto, split equally across all crypto picks
     "max_short_picks": 2,
     "max_long_picks": 3,
-    "stop_loss_pct": 5,
-    "target_gain_pct": 8,
+    "stop_loss_pct": 7,
+    "target_gain_pct": 15,
     "enabled": True,
     "timezone": "America/New_York",
-    # Crypto settings
     "crypto_enabled": True,
     "max_crypto_short_picks": 2,
     "max_crypto_long_picks": 2,
-    # AI intelligence settings
-    "risk_profile": "moderate",       # conservative | moderate | aggressive
-    "excluded_sectors": [],            # e.g. ["Energy", "Utilities"]
-    "watchlist": [],                   # e.g. ["NVDA", "TSLA", "BRK-B"] — always evaluated
-    # Pick mode: which sections appear in daily message
-    "pick_mode": "both",              # "st" | "lt" | "both"
     # Multi-user pilot: list of chat_id strings allowed to receive messages
-    # Empty list = owner-only mode (just TELEGRAM_CHAT_ID env var).
     "allowed_users": [],
+}
+
+# ── Per-user config (each user has their own copy of these) ───────────────────
+DEFAULT_USER_CONFIG = {
+    "risk_profile":      "moderate",   # conservative | moderate | aggressive
+    "excluded_sectors":  [],           # e.g. ["Energy", "Utilities"]
+    "watchlist":         [],           # e.g. ["NVDA", "TSLA"] — always evaluated
+    "pick_mode":         "both",       # "st" | "lt" | "both"
+    "stock_budget":      None,         # total daily $ for stocks (null = unset)
+    "crypto_budget":     None,         # total daily $ for crypto (null = unset)
+    "paused":            False,        # True = user opted out of daily picks
+    "max_stock_picks":   None,         # cap total stock picks shown (None = use global defaults)
+    "max_crypto_picks":  None,         # cap total crypto picks shown (None = use global defaults)
+    "stop_loss_pct":     None,         # % below entry to auto-close (None = use global default of 7%)
+    "target_gain_pct":   None,         # % above entry as default target (None = use global default of 15%)
 }
 
 GIST_FILENAME          = "config.json"
 PICKS_FILENAME         = "picks.json"           # Stores morning picks for 10:30 AM confirmation
 WEEKLY_PICKS_FILENAME  = "weekly_picks.json"    # Accumulates Mon–Fri picks for Saturday recap
-TRADE_LOG_FILENAME     = "trade_log.json"       # Persistent trade log for performance tracking
 PENDING_STATE_FILENAME = "pending_state.json"   # Conversation state for multi-step commands
-PAPER_PORTFOLIO_FILE   = "paper_portfolio.json" # Paper trading portfolio (simulated trades)
-PRICE_ALERTS_FILE      = "price_alerts.json"    # User price alerts
+PRICE_ALERTS_FILE      = "price_alerts.json"    # User price alerts (already per-user by chat_id)
 SIGNAL_CACHE_FILE      = "signal_cache.json"    # Cached sentiment + insider signals (5-day TTL)
 SCREENER_CACHE_FILE    = "screener_cache.json"  # Pre-scored candidates from midnight run
+# ── Per-user data files (keyed by chat_id inside the JSON) ───────────────────
+USER_CONFIGS_FILE      = "user_configs.json"    # Per-user settings (risk, watchlist, budget…)
+USER_TRADES_FILE       = "user_trades.json"     # Per-user trade logs (open + closed)
+USER_PAPER_FILE        = "user_paper.json"      # Per-user paper portfolios
 
 
 def _gist_headers() -> dict:
@@ -98,6 +105,83 @@ def reset_config() -> dict:
     """Restore config.json on the Gist to DEFAULT_CONFIG. Returns defaults."""
     _write_config(DEFAULT_CONFIG)
     return dict(DEFAULT_CONFIG)
+
+
+# ── Per-user config ───────────────────────────────────────────────────────────
+
+def get_user_config(chat_id: str) -> dict:
+    """Return config for a specific user, merged with DEFAULT_USER_CONFIG."""
+    all_configs = _load_gist_file(USER_CONFIGS_FILE) or {}
+    user = all_configs.get(str(chat_id), {})
+    return {**DEFAULT_USER_CONFIG, **user}
+
+
+def update_user_config(chat_id: str, key: str, value) -> dict:
+    """Update a single key for a user. Returns updated user config."""
+    all_configs = _load_gist_file(USER_CONFIGS_FILE) or {}
+    uid = str(chat_id)
+    if uid not in all_configs:
+        all_configs[uid] = {}
+    all_configs[uid][key] = value
+    _write_gist_file(USER_CONFIGS_FILE, all_configs)
+    return get_user_config(uid)
+
+
+def update_user_config_multi(chat_id: str, updates: dict) -> dict:
+    """Update multiple keys for a user at once. Returns updated user config."""
+    all_configs = _load_gist_file(USER_CONFIGS_FILE) or {}
+    uid = str(chat_id)
+    if uid not in all_configs:
+        all_configs[uid] = {}
+    all_configs[uid].update(updates)
+    _write_gist_file(USER_CONFIGS_FILE, all_configs)
+    return get_user_config(uid)
+
+
+def reset_user_config(chat_id: str) -> dict:
+    """Reset a user's config to DEFAULT_USER_CONFIG."""
+    all_configs = _load_gist_file(USER_CONFIGS_FILE) or {}
+    all_configs[str(chat_id)] = dict(DEFAULT_USER_CONFIG)
+    _write_gist_file(USER_CONFIGS_FILE, all_configs)
+    return dict(DEFAULT_USER_CONFIG)
+
+
+# ── Per-user trade log ────────────────────────────────────────────────────────
+
+def load_user_trade_log(chat_id: str) -> dict:
+    """Load trade log for a specific user."""
+    all_logs = _load_gist_file(USER_TRADES_FILE) or {}
+    log = all_logs.get(str(chat_id), {"open": [], "closed": []})
+    log.setdefault("open", [])
+    log.setdefault("closed", [])
+    return log
+
+
+def save_user_trade_log(chat_id: str, log: dict) -> None:
+    """Save trade log for a specific user."""
+    all_logs = _load_gist_file(USER_TRADES_FILE) or {}
+    all_logs[str(chat_id)] = log
+    _write_gist_file(USER_TRADES_FILE, all_logs)
+
+
+# ── Per-user paper portfolio ──────────────────────────────────────────────────
+
+def load_user_paper(chat_id: str) -> dict:
+    """Load paper portfolio for a specific user."""
+    all_paper = _load_gist_file(USER_PAPER_FILE) or {}
+    data = all_paper.get(str(chat_id), {})
+    data.setdefault("positions", [])
+    data.setdefault("history", [])
+    data.setdefault("starting_cash", 10_000.0)
+    data.setdefault("cash", data["starting_cash"])
+    return data
+
+
+def save_user_paper(chat_id: str, data: dict) -> None:
+    """Save paper portfolio for a specific user."""
+    all_paper = _load_gist_file(USER_PAPER_FILE) or {}
+    all_paper[str(chat_id)] = data
+    _write_gist_file(USER_PAPER_FILE, all_paper)
 
 
 # ── Multi-user allowlist helpers ─────────────────────────────────────────────
@@ -240,25 +324,6 @@ def get_dynamic_pick_counts(config: dict) -> dict:
         "max_crypto_short_picks": _count(cb, 0.5, 10.0, 4, config.get("max_crypto_short_picks", 2)),
         "max_crypto_long_picks":  _count(cb, 0.5, 10.0, 4, config.get("max_crypto_long_picks",  2)),
     }
-
-
-# ── Trade log (persistent P&L tracking) ──────────────────────────────────────
-
-def load_trade_log() -> dict:
-    """Load trade log from Gist. Returns {"open": [], "closed": []} if missing."""
-    data = _load_gist_file(TRADE_LOG_FILENAME)
-    if not data:
-        return {"open": [], "closed": []}
-    data.setdefault("open", [])
-    data.setdefault("closed", [])
-    return data
-
-
-def save_trade_log(log: dict) -> None:
-    """Save trade log to Gist."""
-    _write_gist_file(TRADE_LOG_FILENAME, log)
-    print(f"[config_manager] Trade log saved "
-          f"({len(log['open'])} open, {len(log['closed'])} closed).")
 
 
 # ── Signal cache (sentiment + insider, 5-day TTL) ────────────────────────────

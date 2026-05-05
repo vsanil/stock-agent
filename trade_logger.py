@@ -1,11 +1,12 @@
 """
 trade_logger.py — Persistent trade tracking for short-term picks.
+Per-user: each user's trades are stored separately, keyed by chat_id.
 
 Lifecycle:
-  Morning run   → open_trades(picks)          — log each ST pick
-  Confirmation  → check_and_close_trades()    — close if target/stop hit
-  /perf command → get_performance_stats()     — all-time stats
-  Saturday      → get_weekly_closed_trades()  — this week's closed trades
+  Morning run   → open_trades(picks, chat_id)          — log each ST pick
+  Confirmation  → check_and_close_trades(prices, chat_id) — close if target/stop hit
+  /perf command → get_performance_stats(chat_id)       — all-time stats
+  Saturday      → get_weekly_closed_trades(chat_id)    — this week's closed trades
 
 Only short-term picks are tracked (they have clear entry/target/stop).
 Long-term DCA picks are tracked separately via weekly_picks.json.
@@ -13,18 +14,18 @@ Trades expire after 28 days if neither target nor stop is hit.
 """
 
 from datetime import date
-from config_manager import load_trade_log, save_trade_log
+from config_manager import load_user_trade_log, save_user_trade_log
 
 
 # ── Open trades (morning run) ─────────────────────────────────────────────────
 
-def open_trades(picks: dict) -> None:
+def open_trades(picks: dict, chat_id: str) -> None:
     """
-    Add today's short-term picks (stocks + crypto) to the open trades list.
+    Add today's short-term picks (stocks + crypto) to a user's open trades list.
     Skips duplicates — safe to call multiple times.
     """
     today = date.today().isoformat()
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
 
     open_tickers = {t["ticker"] for t in log["open"]}
     new_count    = 0
@@ -72,22 +73,22 @@ def open_trades(picks: dict) -> None:
         new_count += 1
 
     if new_count:
-        save_trade_log(log)
-        print(f"[trade_logger] Opened {new_count} new trade(s).")
+        save_user_trade_log(chat_id, log)
+        print(f"[trade_logger] Opened {new_count} new trade(s) for {chat_id}.")
     else:
-        print("[trade_logger] No new trades to open (already logged or no picks).")
+        print(f"[trade_logger] No new trades to open for {chat_id} (already logged or no picks).")
 
 
 # ── Close trades (confirmation run) ──────────────────────────────────────────
 
-def check_and_close_trades(current_prices: dict) -> list[dict]:
+def check_and_close_trades(current_prices: dict, chat_id: str) -> list[dict]:
     """
-    Compare open trades against current prices.
+    Compare open trades against current prices for a specific user.
     Closes trades where target hit, stop hit, or open > 28 days.
     Returns list of newly closed trades (empty if none).
     """
     today = date.today().isoformat()
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
 
     if not log["open"]:
         return []
@@ -142,25 +143,25 @@ def check_and_close_trades(current_prices: dict) -> list[dict]:
             log["closed"].append(closed)
             newly_closed.append(closed)
             print(f"[trade_logger] Closed {ticker} — {outcome} "
-                  f"@ ${current} ({return_pct:+.1f}%)")
+                  f"@ ${current} ({return_pct:+.1f}%) for {chat_id}")
         else:
             still_open.append(trade)
 
     if newly_closed:
         log["open"] = still_open
-        save_trade_log(log)
+        save_user_trade_log(chat_id, log)
 
     return newly_closed
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
-def get_performance_stats(asset_type: str | None = None) -> dict | None:
+def get_performance_stats(chat_id: str, asset_type: str | None = None) -> dict | None:
     """
-    Compute all-time stats from closed trades.
+    Compute all-time stats from closed trades for a specific user.
     Pass asset_type="stock" or "crypto" to filter, or None for combined.
     """
-    log    = load_trade_log()
+    log    = load_user_trade_log(chat_id)
     closed = log.get("closed", [])
 
     if asset_type:
@@ -211,22 +212,25 @@ def get_performance_stats(asset_type: str | None = None) -> dict | None:
     }
 
 
-def manual_open_trade(ticker: str, bought_price: float, asset_type: str = "stock",
+def manual_open_trade(ticker: str, bought_price: float, chat_id: str,
+                      asset_type: str = "stock",
                       shares: float | None = None, allocation: float | None = None,
-                      target_price: float | None = None, stop_loss: float | None = None) -> dict:
+                      target_price: float | None = None, stop_loss: float | None = None,
+                      stop_loss_pct: float = 7.0, target_gain_pct: float = 15.0) -> dict:
     """
     Log a trade the user actually placed.
-    If target/stop not provided, defaults to +8% target / -5% stop.
+    If target/stop not provided, uses stop_loss_pct / target_gain_pct (caller should pass
+    per-user values; defaults are 7% stop and 15% target).
     Returns the trade dict that was saved.
     """
     today = date.today().isoformat()
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
 
-    # Default target/stop based on bought price
+    # Default target/stop from per-user thresholds
     if target_price is None:
-        target_price = round(bought_price * 1.08, 2)
+        target_price = round(bought_price * (1 + target_gain_pct / 100), 2)
     if stop_loss is None:
-        stop_loss = round(bought_price * 0.95, 2)
+        stop_loss = round(bought_price * (1 - stop_loss_pct / 100), 2)
 
     # Derive allocation from shares if provided
     if allocation is None and shares is not None:
@@ -249,18 +253,18 @@ def manual_open_trade(ticker: str, bought_price: float, asset_type: str = "stock
     # Remove existing open entry for same ticker to avoid duplicates
     log["open"] = [t for t in log["open"] if t["ticker"] != ticker.upper()]
     log["open"].append(trade)
-    save_trade_log(log)
-    print(f"[trade_logger] Manually opened {ticker.upper()} @ ${bought_price}")
+    save_user_trade_log(chat_id, log)
+    print(f"[trade_logger] Manually opened {ticker.upper()} @ ${bought_price} for {chat_id}")
     return trade
 
 
-def manual_close_trade(ticker: str, sold_price: float) -> dict | None:
+def manual_close_trade(ticker: str, sold_price: float, chat_id: str) -> dict | None:
     """
     Log that the user sold a position. Finds the open trade, closes it,
     computes P&L. Returns closed trade dict, or None if ticker not found.
     """
     today = date.today().isoformat()
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
 
     match = None
     remaining = []
@@ -293,17 +297,17 @@ def manual_close_trade(ticker: str, sold_price: float) -> dict | None:
     }
     log["open"]   = remaining
     log["closed"].append(closed)
-    save_trade_log(log)
-    print(f"[trade_logger] Manually closed {ticker.upper()} @ ${sold_price} ({return_pct:+.1f}%)")
+    save_user_trade_log(chat_id, log)
+    print(f"[trade_logger] Manually closed {ticker.upper()} @ ${sold_price} ({return_pct:+.1f}%) for {chat_id}")
     return closed
 
 
-def cancel_trade(ticker: str) -> dict | None:
+def cancel_trade(ticker: str, chat_id: str) -> dict | None:
     """
     Remove an open position without recording it as a closed trade.
     Used to undo an accidental /bought. Returns removed trade or None if not found.
     """
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
     match = None
     remaining = []
     for t in log["open"]:
@@ -313,17 +317,17 @@ def cancel_trade(ticker: str) -> dict | None:
             remaining.append(t)
     if match:
         log["open"] = remaining
-        save_trade_log(log)
-        print(f"[trade_logger] Cancelled open position: {ticker.upper()}")
+        save_user_trade_log(chat_id, log)
+        print(f"[trade_logger] Cancelled open position: {ticker.upper()} for {chat_id}")
     return match
 
 
-def reopen_trade(ticker: str) -> dict | None:
+def reopen_trade(ticker: str, chat_id: str) -> dict | None:
     """
     Move the most recently closed trade for a ticker back to open.
     Used to undo an accidental /sold. Returns reopened trade or None if not found.
     """
-    log    = load_trade_log()
+    log    = load_user_trade_log(chat_id)
     closed = log.get("closed", [])
 
     # Find the most recent closed entry for this ticker
@@ -343,14 +347,15 @@ def reopen_trade(ticker: str) -> dict | None:
 
     log["closed"] = closed
     log["open"].append(trade)
-    save_trade_log(log)
-    print(f"[trade_logger] Reopened position: {ticker.upper()}")
+    save_user_trade_log(chat_id, log)
+    print(f"[trade_logger] Reopened position: {ticker.upper()} for {chat_id}")
     return trade
 
 
-def update_trailing_stops(current_prices: dict, default_trailing_pct: float = 5.0) -> list[dict]:
+def update_trailing_stops(current_prices: dict, chat_id: str,
+                          default_trailing_pct: float = 5.0) -> list[dict]:
     """
-    Update high-water marks and evaluate trailing stops for all open trades.
+    Update high-water marks and evaluate trailing stops for a user's open trades.
     For each trade:
       1. If current price > highest_price_seen → update high-water mark
       2. Compute trailing stop = highest_price_seen * (1 - trailing_pct / 100)
@@ -360,7 +365,7 @@ def update_trailing_stops(current_prices: dict, default_trailing_pct: float = 5.
     Only applies to trades where trailing_stop_pct is set, or uses default_trailing_pct.
     """
     today = date.today().isoformat()
-    log   = load_trade_log()
+    log   = load_user_trade_log(chat_id)
 
     if not log["open"]:
         return []
@@ -410,28 +415,28 @@ def update_trailing_stops(current_prices: dict, default_trailing_pct: float = 5.
             log["closed"].append(closed)
             newly_closed.append(closed)
             print(f"[trade_logger] Trailing stop hit: {ticker} @ ${current:.2f} "
-                  f"(trail stop ${trailing_stop:.2f}, peak ${hwm:.2f}, {return_pct:+.1f}%)")
+                  f"(trail stop ${trailing_stop:.2f}, peak ${hwm:.2f}, {return_pct:+.1f}%) for {chat_id}")
         else:
             still_open.append(trade)
 
     if newly_closed:
         log["open"] = still_open
-        save_trade_log(log)
+        save_user_trade_log(chat_id, log)
     elif hwm_updated:
         # Save updated high-water marks even if no trailing stop triggered
         log["open"] = still_open
-        save_trade_log(log)
+        save_user_trade_log(chat_id, log)
 
     return newly_closed
 
 
-def get_weekly_closed_trades() -> list[dict]:
-    """Return trades closed this calendar week (Mon–today)."""
+def get_weekly_closed_trades(chat_id: str) -> list[dict]:
+    """Return trades closed this calendar week (Mon–today) for a specific user."""
     from datetime import timedelta
     today    = date.today()
     week_start = today - timedelta(days=today.weekday())   # Monday
 
-    log    = load_trade_log()
+    log    = load_user_trade_log(chat_id)
     closed = log.get("closed", [])
 
     result = []

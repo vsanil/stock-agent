@@ -11,8 +11,11 @@ import requests
 from datetime import date
 
 from config_manager import (
-    get_config, update_config, update_config_multi, reset_config, load_picks,
+    get_config, update_config, update_config_multi,
+    get_user_config, update_user_config, update_user_config_multi, reset_user_config,
+    load_picks,
     load_pending_state, save_pending_state, clear_pending_state,
+    load_user_trade_log,
 )
 
 
@@ -33,6 +36,18 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_MESSAGE_LENGTH = 4096   # Telegram limit (much larger than WhatsApp)
 MAX_RETRIES = 3
 RETRY_DELAY = 5
+
+# Crypto tickers recognised by the bot (used to set asset_type on manual trades)
+_CRYPTO_SYMBOLS = {
+    "BTC","ETH","SOL","BNB","XRP","ADA","DOGE","AVAX","DOT","MATIC",
+    "LINK","UNI","ATOM","LTC","BCH","ALGO","XLM","VET","ICP","FIL",
+}
+
+
+def _is_admin(chat_id: str | None = None) -> bool:
+    """Return True if the given chat_id (or env TELEGRAM_CHAT_ID) is the bot owner."""
+    resolved = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
+    return str(resolved) == str(os.environ.get("TELEGRAM_CHAT_ID", ""))
 
 
 # ── Core send ─────────────────────────────────────────────────────────────────
@@ -254,6 +269,30 @@ def format_daily_message(picks: dict, config: dict) -> str:
     lt_picks  = stocks.get("long_term", [])  if show_lt else []
     cst_picks = crypto.get("short_term", []) if show_st else []
     clt_picks = crypto.get("long_term", [])  if show_lt else []
+
+    # Apply per-user pick caps
+    max_s = config.get("max_stock_picks")
+    max_c = config.get("max_crypto_picks")
+    if max_s is not None and max_s > 0:
+        if show_st and show_lt:
+            n_st = max(1, round(max_s * 0.4))
+            n_lt = max(0, max_s - n_st)
+        elif show_st:
+            n_st, n_lt = max_s, 0
+        else:
+            n_st, n_lt = 0, max_s
+        st_picks = st_picks[:n_st]
+        lt_picks = lt_picks[:n_lt]
+    if max_c is not None and max_c > 0:
+        if show_st and show_lt:
+            n_cst = max(1, round(max_c * 0.5))
+            n_clt = max(0, max_c - n_cst)
+        elif show_st:
+            n_cst, n_clt = max_c, 0
+        else:
+            n_cst, n_clt = 0, max_c
+        cst_picks = cst_picks[:n_cst]
+        clt_picks = clt_picks[:n_clt]
 
     # ── Macro context line ────────────────────────────────────────────────────
     macro_parts = []
@@ -744,14 +783,17 @@ def handle_callback_query(callback_query: dict) -> None:
                     stop   = p.get("stop_loss")
                     break
 
-        crypto_symbols = {
-            "BTC","ETH","SOL","BNB","XRP","ADA","DOGE","AVAX","DOT","MATIC",
-            "LINK","UNI","ATOM","LTC","BCH","ALGO","XLM","VET","ICP","FIL",
-        }
-        asset_type = "crypto" if ticker in crypto_symbols else "stock"
+        asset_type = "crypto" if ticker in _CRYPTO_SYMBOLS else "stock"
 
-        trade = manual_open_trade(ticker, price, asset_type=asset_type,
-                                  shares=shares, target_price=target, stop_loss=stop)
+        # Resolve per-user thresholds for callback-path buys
+        _ucfg   = get_user_config(chat_id)
+        _gcfg   = get_config()
+        _sl_pct = float(_ucfg.get("stop_loss_pct")   or _gcfg.get("stop_loss_pct",   7.0))
+        _tg_pct = float(_ucfg.get("target_gain_pct") or _gcfg.get("target_gain_pct", 15.0))
+
+        trade = manual_open_trade(ticker, price, chat_id, asset_type=asset_type,
+                                  shares=shares, target_price=target, stop_loss=stop,
+                                  stop_loss_pct=_sl_pct, target_gain_pct=_tg_pct)
 
         alloc_str  = f"  · <code>${trade['allocation']:.2f}</code> deployed" if trade.get("allocation") else ""
         shares_str = f"  · {shares} shares" if shares else ""
@@ -772,7 +814,7 @@ def handle_callback_query(callback_query: dict) -> None:
     elif action == "confirm_cancel":
         from trade_logger import cancel_trade
         ticker  = parts[1] if len(parts) > 1 else ""
-        removed = cancel_trade(ticker)
+        removed = cancel_trade(ticker, chat_id)
         if not removed:
             send_message(f"⚠️ No open position found for <b>{ticker}</b>.", chat_id=chat_id)
         else:
@@ -785,7 +827,7 @@ def handle_callback_query(callback_query: dict) -> None:
     elif action == "confirm_reopen":
         from trade_logger import reopen_trade
         ticker   = parts[1] if len(parts) > 1 else ""
-        reopened = reopen_trade(ticker)
+        reopened = reopen_trade(ticker, chat_id)
         if not reopened:
             send_message(f"⚠️ No closed trade found for <b>{ticker}</b> to reopen.", chat_id=chat_id)
         else:
@@ -797,11 +839,10 @@ def handle_callback_query(callback_query: dict) -> None:
 
     elif action in ("cancel", "cancel_auto"):
         from trade_logger import cancel_trade, reopen_trade
-        from config_manager import load_trade_log
         ticker = parts[1] if len(parts) > 1 else ""
 
         if action == "cancel_auto":
-            log        = load_trade_log()
+            log        = load_user_trade_log(chat_id)
             open_trade   = next((t for t in log.get("open",   []) if t["ticker"] == ticker), None)
             closed_trade = next((t for t in reversed(log.get("closed", [])) if t["ticker"] == ticker), None)
 
@@ -860,7 +901,7 @@ def handle_callback_query(callback_query: dict) -> None:
             send_message(f"⚠️ Could not fetch price for <b>{ticker}</b>. Try: <code>/sold {ticker} 197.10</code>", chat_id=chat_id)
             return
 
-        closed = manual_close_trade(ticker, price)
+        closed = manual_close_trade(ticker, price, chat_id)
         if not closed:
             send_message(f"⚠️ No open position found for <b>{ticker}</b>. Use /positions to see open trades.", chat_id=chat_id)
             return
@@ -927,6 +968,11 @@ def _prompt_for_param(command: str, chat_id: str) -> None:
 
 def _execute_bought(ticker: str, price_raw, shares_raw, chat_id: str) -> str:
     from trade_logger import manual_open_trade
+    # Resolve per-user thresholds (fall back to global defaults)
+    _user_cfg   = get_user_config(chat_id)
+    _global_cfg = get_config()
+    _sl_pct  = float(_user_cfg.get("stop_loss_pct")   or _global_cfg.get("stop_loss_pct",   7.0))
+    _tg_pct  = float(_user_cfg.get("target_gain_pct") or _global_cfg.get("target_gain_pct", 15.0))
     price: float | None = None
     if price_raw:
         try:
@@ -958,14 +1004,11 @@ def _execute_bought(ticker: str, price_raw, shares_raw, chat_id: str) -> str:
                 stop   = p.get("stop_loss")
                 break
 
-    crypto_symbols = {
-        "BTC","ETH","SOL","BNB","XRP","ADA","DOGE","AVAX","DOT","MATIC",
-        "LINK","UNI","ATOM","LTC","BCH","ALGO","XLM","VET","ICP","FIL",
-    }
-    asset_type = "crypto" if ticker in crypto_symbols else "stock"
+    asset_type = "crypto" if ticker in _CRYPTO_SYMBOLS else "stock"
 
-    trade = manual_open_trade(ticker, price, asset_type=asset_type,
-                              shares=shares, target_price=target, stop_loss=stop)
+    trade = manual_open_trade(ticker, price, chat_id, asset_type=asset_type,
+                              shares=shares, target_price=target, stop_loss=stop,
+                              stop_loss_pct=_sl_pct, target_gain_pct=_tg_pct)
 
     alloc_str  = f"  · <code>${trade['allocation']:.2f}</code> deployed" if trade.get("allocation") else ""
     shares_str = f"  · {shares} shares" if shares else ""
@@ -994,7 +1037,7 @@ def _execute_sold(ticker: str, price_raw, chat_id: str) -> str:
         return (f"⚠️ Could not fetch price for <b>{ticker}</b>. "
                 f"Reply with the price, e.g. <code>197.10</code>")
 
-    closed = manual_close_trade(ticker, price)
+    closed = manual_close_trade(ticker, price, chat_id)
     if not closed:
         return f"⚠️ No open position found for <b>{ticker}</b>. Use /portfolio to see open trades."
 
@@ -1127,14 +1170,6 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     if command == "set_budget":
         return _parse_and_execute(f"SET BUDGET {text}".strip(), original=f"/set_budget {text}", chat_id=chat_id)
 
-    # Legacy single-bucket commands → redirect to set_budget
-    key_map = {"set_st": "stocks", "set_lt": "stocks", "set_cst": "crypto", "set_clt": "crypto"}
-    if command in key_map:
-        bucket = key_map[command]
-        if text:
-            return _parse_and_execute(f"SET BUDGET {bucket} {text}", original=text, chat_id=chat_id)
-        return _parse_and_execute("SET BUDGET", original="/set_budget", chat_id=chat_id)
-
     if command == "alert":
         return _parse_and_execute(f"ALERT {text}", original=f"/alert {text}", chat_id=chat_id)
 
@@ -1168,7 +1203,7 @@ def _handle_pending_reply(state: dict, text: str, chat_id: str) -> str:
     return _handle_natural_language(text)
 
 
-def _handle_natural_language(query: str) -> str:
+def _handle_natural_language(query: str, chat_id: str | None = None) -> str:
     """
     Parse a free-text message into a bot command using Claude Haiku, then execute it.
     Used as a fallback when no slash-command pattern matches.
@@ -1192,13 +1227,14 @@ Available intents and their exact JSON format:
 {"intent": "exclude",     "sectors": ["Energy", "Utilities"]}
 {"intent": "exclude_clear"}
 {"intent": "set_budget",  "stock_budget": 200, "crypto_budget": 50}   — either key optional, null to clear
+{"intent": "set_picks",       "max_stock_picks": 3, "max_crypto_picks": 1} — either key optional, null to clear
+{"intent": "set_thresholds", "stop_loss_pct": 7, "target_gain_pct": 12}  — either key optional, null to clear
 {"intent": "pause"}
 {"intent": "resume"}
 {"intent": "status"}
 {"intent": "today"}
 {"intent": "prices"}
 {"intent": "perf"}
-{"intent": "watchlist"}
 {"intent": "reset"}
 {"intent": "explain",     "query": "the user's question verbatim"}
 {"intent": "unknown"}
@@ -1210,6 +1246,8 @@ Rules:
 - Map "remove/clear watchlist" → watch_clear
 - Map "exclude/skip/never pick sector" → exclude with proper sector name
 - Map "set/change/increase budget" → set_budget with stock_budget and/or crypto_budget numeric values
+- Map "show me N stocks/picks", "limit/reduce picks", "only N crypto" → set_picks
+- Map "change stop loss", "tighten/widen stop", "set target gain", "adjust thresholds" → set_thresholds with numeric values
 - "stocks 200 crypto 50" → {"stock_budget": 200, "crypto_budget": 50}
 - "stock budget 150" → {"stock_budget": 150}
 - "clear budgets" → {"stock_budget": null, "crypto_budget": null}
@@ -1229,21 +1267,23 @@ Rules:
         print(f"[telegram] NL parse failed ({exc}) — treating as explain query")
         return _explain_pick(query)
 
+    chat_id = chat_id or _chat_id()
+
     intent = parsed.get("intent", "unknown")
     print(f"[telegram] NL intent: {intent} from: {query!r}")
 
     if intent == "set_risk":
-        return _parse_and_execute(f"SET RISK {parsed.get('value','moderate').upper()}", original=query)
+        return _parse_and_execute(f"SET RISK {parsed.get('value','moderate').upper()}", original=query, chat_id=chat_id)
     if intent == "watch":
         tickers = " ".join(parsed.get("tickers", []))
-        return _parse_and_execute(f"WATCH {tickers}", original=f"/watch {tickers}")
+        return _parse_and_execute(f"WATCH {tickers}", original=f"/watch {tickers}", chat_id=chat_id)
     if intent == "watch_clear":
-        return _parse_and_execute("WATCH NONE", original="/watch none")
+        return _parse_and_execute("WATCH NONE", original="/watch none", chat_id=chat_id)
     if intent == "exclude":
         sectors = " ".join(parsed.get("sectors", []))
-        return _parse_and_execute(f"EXCLUDE {sectors.upper()}", original=f"/exclude {sectors}")
+        return _parse_and_execute(f"EXCLUDE {sectors.upper()}", original=f"/exclude {sectors}", chat_id=chat_id)
     if intent == "exclude_clear":
-        return _parse_and_execute("EXCLUDE NONE", original="/exclude none")
+        return _parse_and_execute("EXCLUDE NONE", original="/exclude none", chat_id=chat_id)
     if intent == "set_budget":
         parts = []
         if parsed.get("stock_budget") is not None:
@@ -1251,28 +1291,45 @@ Rules:
         if parsed.get("crypto_budget") is not None:
             parts.append(f"crypto {parsed['crypto_budget']}")
         cmd = f"SET BUDGET {' '.join(parts)}" if parts else "SET BUDGET off"
-        return _parse_and_execute(cmd, original=query)
+        return _parse_and_execute(cmd, original=query, chat_id=chat_id)
+    if intent == "set_picks":
+        parts = []
+        if parsed.get("max_stock_picks") is not None:
+            parts.append(f"stocks {parsed['max_stock_picks']}")
+        if parsed.get("max_crypto_picks") is not None:
+            parts.append(f"crypto {parsed['max_crypto_picks']}")
+        cmd = f"SET PICKS {' '.join(parts)}" if parts else "SET PICKS off"
+        return _parse_and_execute(cmd, original=query, chat_id=chat_id)
+    if intent == "set_thresholds":
+        parts = []
+        if parsed.get("stop_loss_pct") is not None:
+            parts.append(f"stop {parsed['stop_loss_pct']}")
+        if parsed.get("target_gain_pct") is not None:
+            parts.append(f"target {parsed['target_gain_pct']}")
+        cmd = f"SET THRESHOLDS {' '.join(parts)}" if parts else "SET THRESHOLDS"
+        return _parse_and_execute(cmd, original=query, chat_id=chat_id)
     if intent == "pause":
-        return _parse_and_execute("PAUSE", original=query)
+        return _parse_and_execute("PAUSE", original=query, chat_id=chat_id)
     if intent == "resume":
-        return _parse_and_execute("RESUME", original=query)
+        return _parse_and_execute("RESUME", original=query, chat_id=chat_id)
     if intent == "status":
-        return _parse_and_execute("STATUS", original=query)
+        return _parse_and_execute("STATUS", original=query, chat_id=chat_id)
     if intent == "today":
-        return _parse_and_execute("TODAY", original=query)
+        return _parse_and_execute("TODAY", original=query, chat_id=chat_id)
     if intent == "prices":
-        return _parse_and_execute("PRICES", original=query)
+        return _parse_and_execute("PRICES", original=query, chat_id=chat_id)
     if intent == "perf":
-        return _parse_and_execute("PERF", original=query)
-    if intent == "watchlist":
-        return _parse_and_execute("WATCHLIST", original=query)
+        return _parse_and_execute("PERF", original=query, chat_id=chat_id)
     if intent == "reset":
-        return _parse_and_execute("RESET", original=query)
+        return _parse_and_execute("RESET", original=query, chat_id=chat_id)
     if intent == "explain":
         return _explain_pick(parsed.get("query", query))
 
     # True unknown — still try explain as last resort for questions
     return _explain_pick(query)
+
+
+
 
 
 def _nl_parse_trade(command: str, raw: str) -> dict:
@@ -1349,7 +1406,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         picks = load_picks()
         if not picks:
             return "📭 No picks for today yet. Check back after 8 AM ET."
-        config = get_config()
+        config = {**get_config(), **get_user_config(chat_id)}
         return format_daily_message(picks, config)
 
     if text == "EXPLAIN":
@@ -1364,8 +1421,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text == "PERF":
         from trade_logger import get_performance_stats
-        stock_stats  = get_performance_stats("stock")
-        crypto_stats = get_performance_stats("crypto")
+        stock_stats  = get_performance_stats(chat_id, "stock")
+        crypto_stats = get_performance_stats(chat_id, "crypto")
 
         if not stock_stats and not crypto_stats:
             return "📭 No closed trades yet. Check back after your first picks are resolved."
@@ -1512,7 +1569,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             return "🤔 Which stock? Try: /paper_buy Apple 10 or /paper_buy 5 shares of Tesla"
         if not shares:
             return f"🤔 How many shares of <b>{ticker}</b> to simulate buying?"
-        return paper_buy(ticker, shares, price)
+        return paper_buy(ticker, shares, chat_id, price)
 
     if text in ("PAPER SELL",):
         _prompt_for_param("paper_sell", chat_id)
@@ -1538,15 +1595,15 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             price  = parsed.get("price")
         if not ticker:
             return "🤔 Which stock to simulate selling? Try: /paper_sell Apple or /paper_sell AAPL 5 shares"
-        return paper_sell(ticker, shares, price)
+        return paper_sell(ticker, chat_id, shares, price)
 
     if text == "PAPER PORTFOLIO":
         from paper_trader import paper_portfolio
-        return paper_portfolio()
+        return paper_portfolio(chat_id)
 
     if text == "PAPER PERF":
         from paper_trader import paper_performance
-        return paper_performance()
+        return paper_performance(chat_id)
 
     if text == "PAPER ADD CASH" or text.startswith("PAPER ADD CASH "):
         from paper_trader import paper_add_cash
@@ -1560,7 +1617,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             amount = parsed.get("price")
         if not amount:
             return "🤔 How much to add? Try: /paper_add_cash 5000 or /paper_add_cash 10k"
-        return paper_add_cash(amount)
+        return paper_add_cash(amount, chat_id)
 
     if text == "PAPER RESET" or text.startswith("PAPER RESET "):
         from paper_trader import paper_reset
@@ -1573,7 +1630,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             raw    = text[len("PAPER RESET "):].strip()
             parsed = _nl_parse_trade("paper_reset", raw)
             amount = parsed.get("price")   # reuse price field for the cash amount
-        return paper_reset(amount)
+        return paper_reset(chat_id, amount)
 
     # ── Backtest ──────────────────────────────────────────────────────────────
     if text == "BACKTEST":
@@ -1606,7 +1663,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/positions  ·  /history\n"
             "\n<b>Intelligence</b>"
             "\n/set_budget  ·  /set_risk  ·  /mode"
-            "\n/watch  ·  /exclude  ·  /watchlist\n"
+            "\n/set_picks  ·  /set_thresholds"
+            "\n/watch  ·  /exclude\n"
             "\n<b>Market</b>"
             "\n/regime  ·  /backtest\n"
             "\n<b>Price Alerts</b>"
@@ -1617,8 +1675,10 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             "\n/paper_reset  ·  /paper_add_cash\n"
             "\n<b>Control</b>"
             "\n/pause  ·  /resume  ·  /status  ·  /reset  ·  /help"
-            "\n/users  ·  /adduser  ·  /removeuser  <i>(admin)</i>"
             "\n/share  <i>(invite link)</i>"
+            "\n/users  ·  /adduser  ·  /removeuser  <i>(admin)</i>"
+            "\n/bot_pause  ·  /bot_resume  <i>(admin — global kill switch)</i>"
+            "\n/bot_crypto_on  ·  /bot_crypto_off  <i>(admin — crypto analysis toggle)</i>"
         )
 
     # /set_risk conservative | moderate | aggressive  (or natural language)
@@ -1631,7 +1691,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         profile = raw if raw in ("conservative", "moderate", "aggressive") else _nl_param("risk", raw).lower()
         if profile not in ("conservative", "moderate", "aggressive"):
             profile = "moderate"
-        update_config("risk_profile", profile)
+        update_user_config(chat_id, "risk_profile", profile)
         descriptions = {
             "conservative": "Fewer picks, tighter stops, low-volatility sectors, reduced crypto.",
             "moderate":     "Balanced approach — default settings.",
@@ -1641,7 +1701,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     # /mode st | /mode lt | /mode both — choose which sections appear in daily picks
     if text == "MODE":
-        config = get_config()
+        config = get_user_config(chat_id)
         current = config.get("pick_mode", "both")
         mode_desc = {
             "st":   "Short Term only (stocks + crypto, fast trades)",
@@ -1661,7 +1721,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         raw = text[len("MODE "):].strip().lower()
         if raw not in ("st", "lt", "both"):
             return "❌ Invalid mode. Use: /mode st, /mode lt, or /mode both"
-        update_config("pick_mode", raw)
+        update_user_config(chat_id, "pick_mode", raw)
         labels = {
             "st":   "📈 Short Term only — fast trades (stock + crypto ST sections)",
             "lt":   "🏦 Long Term only — DCA positions (stock + crypto LT sections)",
@@ -1678,7 +1738,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         raw_query     = original.lstrip("/")
         sectors_input = raw_query.split(" ", 1)[1].strip() if " " in raw_query else ""
         if sectors_input.lower() in ("none", "clear", "reset", ""):
-            update_config("excluded_sectors", [])
+            update_user_config(chat_id, "excluded_sectors", [])
             return "✅ Sector exclusions cleared — all sectors eligible again."
         # Use Haiku to map natural language → proper sector names
         import json as _json
@@ -1686,7 +1746,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             excluded = _json.loads(_nl_param("exclude", sectors_input))
         except Exception:
             excluded = [sectors_input.title()]
-        update_config("excluded_sectors", excluded)
+        update_user_config(chat_id, "excluded_sectors", excluded)
         return (f"✅ Excluding sectors: <b>{', '.join(excluded)}</b>\n"
                 f"These sectors will be skipped in tomorrow's picks.\n"
                 f"<i>To clear: /exclude none</i>")
@@ -1700,7 +1760,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         raw_query     = original.lstrip("/")
         tickers_input = raw_query.split(" ", 1)[1].strip() if " " in raw_query else ""
         if tickers_input.upper() in ("NONE", "CLEAR", "RESET", ""):
-            update_config("watchlist", [])
+            update_user_config(chat_id, "watchlist", [])
             return "✅ Watchlist cleared."
         # Split on spaces, commas, or slashes — support "tesla/microsoft", "NVDA, TSLA"
         import re as _re, json as _json
@@ -1715,23 +1775,10 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 tickers = _json.loads(_nl_param("watch", tickers_input))
             except Exception:
                 tickers = [p.upper() for p in parts]
-        update_config("watchlist", tickers)
+        update_user_config(chat_id, "watchlist", tickers)
         return (f"✅ Watchlist set: <b>{', '.join(tickers)}</b>\n"
                 f"These tickers will always be evaluated in tomorrow's screener.\n"
                 f"<i>To clear: /watch none</i>")
-
-    if text == "WATCHLIST":
-        config = get_config()
-        wl = config.get("watchlist", [])
-        ex = config.get("excluded_sectors", [])
-        rp = config.get("risk_profile", "moderate")
-        pm = config.get("pick_mode", "both")
-        lines = [f"<b>🎯 Intelligence</b>",
-                 f"Risk profile: <b>{rp}</b>",
-                 f"Pick mode: <b>{pm}</b>",
-                 f"Watchlist: <b>{', '.join(wl) if wl else 'none'}</b>",
-                 f"Excluded sectors: <b>{', '.join(ex) if ex else 'none'}</b>"]
-        return "\n".join(lines)
 
     # ── /share ───────────────────────────────────────────────────────────────
     if text == "SHARE":
@@ -1767,11 +1814,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         )
 
     # ── Admin: user management ────────────────────────────────────────────────
-    def _is_admin() -> bool:
-        return str(chat_id) == str(os.environ.get("TELEGRAM_CHAT_ID", ""))
-
     if text.startswith("ADDUSER ") or text == "ADDUSER":
-        if not _is_admin():
+        if not _is_admin(chat_id):
             return "🔒 Admin only."
         parts = text.split()
         if len(parts) < 2:
@@ -1787,7 +1831,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         return f"✅ Added <code>{new_id}</code> to allowlist. They've been notified."
 
     if text.startswith("REMOVEUSER ") or text == "REMOVEUSER":
-        if not _is_admin():
+        if not _is_admin(chat_id):
             return "🔒 Admin only."
         parts = text.split()
         if len(parts) < 2:
@@ -1801,7 +1845,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             return f"❌ {e}"
 
     if text == "USERS":
-        if not _is_admin():
+        if not _is_admin(chat_id):
             return "🔒 Admin only."
         from config_manager import get_allowed_users
         users = get_allowed_users()
@@ -1813,44 +1857,159 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         lines.append(f"\n<i>{len(users)} user(s) total</i>")
         return "\n".join(lines)
 
-    # ── /pause /resume /reset /status ─────────────────────────────────────────
+    # ── /pause /resume (per-user) ─────────────────────────────────────────────
     if text == "PAUSE":
-        update_config("enabled", False)
-        return "⏸ Agent paused. Daily picks suspended. Send /resume to restart."
+        update_user_config(chat_id, "paused", True)
+        return "⏸ <b>Your picks paused.</b> You won't receive daily briefings until you send /resume.\n<i>Other users are unaffected.</i>"
 
     if text == "RESUME":
+        update_user_config(chat_id, "paused", False)
+        return "▶️ <b>Picks resumed.</b> You'll receive tomorrow's morning briefing as normal."
+
+    # ── /bot_pause /bot_resume (admin-only global kill switch) ───────────────
+    if text == "BOT PAUSE":
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        update_config("enabled", False)
+        return "⏸ <b>Bot paused globally.</b> No picks will be sent to anyone. Use /bot_resume to restart."
+
+    if text == "BOT RESUME":
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
         update_config("enabled", True)
-        return "▶️ Agent resumed. Daily picks will run tomorrow morning."
+        return "▶️ <b>Bot resumed globally.</b> Daily picks will run tomorrow morning."
+
+    # ── /bot_crypto_on / /bot_crypto_off (admin-only) ─────────────────────────
+    if text == "BOT CRYPTO ON":
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        update_config("crypto_enabled", True)
+        return "✅ <b>Crypto picks enabled.</b> Takes effect tomorrow morning."
+
+    if text == "BOT CRYPTO OFF":
+        if not _is_admin(chat_id):
+            return "🔒 Admin only."
+        update_config("crypto_enabled", False)
+        return "⏸ <b>Crypto picks disabled.</b> No crypto analysis will run tomorrow morning."
+
+    # ── /set_thresholds (per-user stop loss & target gain) ────────────────────
+    if text == "SET THRESHOLDS":
+        user_cfg   = get_user_config(chat_id)
+        global_cfg = get_config()
+        sl  = user_cfg.get("stop_loss_pct")   or global_cfg.get("stop_loss_pct",   5)
+        tg  = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 8)
+        sl_src = "" if user_cfg.get("stop_loss_pct")   else " (global default)"
+        tg_src = "" if user_cfg.get("target_gain_pct") else " (global default)"
+        return (
+            f"⚙️ <b>Your Thresholds</b>\n"
+            f"Stop loss:   <b>{sl}%</b>{sl_src}\n"
+            f"Target gain: <b>{tg}%</b>{tg_src}\n\n"
+            f"<i>To change:</i>\n"
+            f"/set_thresholds stop 7 target 12\n"
+            f"/set_thresholds stop 5\n"
+            f"/set_thresholds target 10\n"
+            f"/set_thresholds reset  — restore global defaults"
+        )
+
+    if text.startswith("SET THRESHOLDS "):
+        import re
+        raw = text[len("SET THRESHOLDS "):].strip().lower()
+
+        if raw in ("reset", "off", "default", "clear", "none"):
+            update_user_config_multi(chat_id, {"stop_loss_pct": None, "target_gain_pct": None})
+            global_cfg = get_config()
+            sl = global_cfg.get("stop_loss_pct", 5)
+            tg = global_cfg.get("target_gain_pct", 8)
+            return f"✅ Thresholds reset to global defaults — stop <b>{sl}%</b>, target <b>{tg}%</b>."
+
+        updates = {}
+        for match in re.finditer(r"(stop(?:\s+loss)?|target(?:\s+gain)?)\s+([\d.]+)%?", raw):
+            key = "stop_loss_pct" if match.group(1).startswith("stop") else "target_gain_pct"
+            updates[key] = max(0.5, round(float(match.group(2)), 1))
+
+        if not updates:
+            # NL fallback via Haiku
+            try:
+                import anthropic, json as _json
+                _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+                _msg    = _client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=80,
+                    system=(
+                        'Parse threshold values. Return JSON only.\n'
+                        '{"stop_loss_pct": <number or null>, "target_gain_pct": <number or null>}\n'
+                        'Examples: "7% stop 12% target" → {"stop_loss_pct": 7, "target_gain_pct": 12}\n'
+                        '"tighten stop to 4" → {"stop_loss_pct": 4, "target_gain_pct": null}'
+                    ),
+                    messages=[{"role": "user", "content": raw}],
+                )
+                parsed = _json.loads(_msg.content[0].text.strip())
+                if parsed.get("stop_loss_pct")   is not None:
+                    updates["stop_loss_pct"]   = max(0.5, round(float(parsed["stop_loss_pct"]),   1))
+                if parsed.get("target_gain_pct") is not None:
+                    updates["target_gain_pct"] = max(0.5, round(float(parsed["target_gain_pct"]), 1))
+            except Exception:
+                pass
+
+        if not updates:
+            return "❌ Couldn't parse. Try: /set_thresholds stop 7 target 12"
+
+        user_cfg   = update_user_config_multi(chat_id, updates)
+        global_cfg = get_config()
+        sl = user_cfg.get("stop_loss_pct")   or global_cfg.get("stop_loss_pct",   5)
+        tg = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 8)
+        return (
+            f"✅ <b>Thresholds updated.</b>\n"
+            f"Stop loss:   <b>{sl}%</b>\n"
+            f"Target gain: <b>{tg}%</b>\n"
+            f"<i>New trades logged with /bought will use these values.</i>"
+        )
 
     if text == "RESET":
-        config = reset_config()
+        reset_user_config(chat_id)
+        global_cfg = get_config()
+        sl = global_cfg.get("stop_loss_pct", 7)
+        tg = global_cfg.get("target_gain_pct", 15)
         return (
-            f"🔄 Config reset to defaults.\n"
-            f"Stocks=${config.get('stock_budget') or 'unset'}  "
-            f"Crypto=${config.get('crypto_budget') or 'unset'}"
+            f"🔄 Your settings reset to defaults.\n"
+            f"Risk: moderate  ·  Pick mode: both\n"
+            f"Budgets: unset  ·  Watchlist: cleared\n"
+            f"Stop loss: {sl}%  ·  Target gain: {tg}%  (global defaults)"
         )
 
     if text == "STATUS":
-        config = get_config()
-        status = "✅ Active" if config.get("enabled") else "⏸ Paused"
-        wl = config.get("watchlist", [])
-        ex = config.get("excluded_sectors", [])
+        global_cfg = get_config()
+        user_cfg   = get_user_config(chat_id)
+        bot_status    = "✅ Active" if global_cfg.get("enabled") else "⏸ Bot paused (admin)"
+        pick_status   = "⏸ Your picks paused" if user_cfg.get("paused") else "✅ Receiving picks"
+        crypto_status = "✅ Enabled" if global_cfg.get("crypto_enabled", True) else "⏸ Disabled (admin)"
+        wl = user_cfg.get("watchlist", [])
+        ex = user_cfg.get("excluded_sectors", [])
+        sl_pct = user_cfg.get("stop_loss_pct") or global_cfg.get("stop_loss_pct", 5)
+        tg_pct = user_cfg.get("target_gain_pct") or global_cfg.get("target_gain_pct", 8)
+        sl_src = "" if user_cfg.get("stop_loss_pct") else " (default)"
+        tg_src = "" if user_cfg.get("target_gain_pct") else " (default)"
         return (
-            f"<b>⚙️ Config ({status})</b>\n"
-            f"Stock budget:     {('$'+str(config.get('stock_budget'))) if config.get('stock_budget') else 'not set'}\n"
-            f"Crypto budget:    {('$'+str(config.get('crypto_budget'))) if config.get('crypto_budget') else 'not set'}\n"
-            f"Risk profile:     {config.get('risk_profile', 'moderate')}\n"
-            f"Pick mode:        {config.get('pick_mode', 'both')}\n"
+            f"<b>⚙️ Your Settings</b>\n"
+            f"Picks:            {pick_status}\n"
+            f"Bot:              {bot_status}\n"
+            f"Crypto analysis:  {crypto_status}\n"
+            f"Stock budget:     {('$'+str(user_cfg.get('stock_budget'))) if user_cfg.get('stock_budget') else 'not set'}\n"
+            f"Crypto budget:    {('$'+str(user_cfg.get('crypto_budget'))) if user_cfg.get('crypto_budget') else 'not set'}\n"
+            f"Risk profile:     {user_cfg.get('risk_profile', 'moderate')}\n"
+            f"Pick mode:        {user_cfg.get('pick_mode', 'both')}\n"
+            f"Stock picks:      {user_cfg.get('max_stock_picks') or 'all'}\n"
+            f"Crypto picks:     {user_cfg.get('max_crypto_picks') or 'all'}\n"
+            f"Stop loss:        {sl_pct}%{sl_src}\n"
+            f"Target gain:      {tg_pct}%{tg_src}\n"
             f"Watchlist:        {', '.join(wl) if wl else 'none'}\n"
-            f"Excluded sectors: {', '.join(ex) if ex else 'none'}\n"
-            f"Stop loss:        {config.get('stop_loss_pct')}%\n"
-            f"Target gain:      {config.get('target_gain_pct')}%"
+            f"Excluded sectors: {', '.join(ex) if ex else 'none'}"
         )
 
     # Bare budget commands — prompt for the value
     # ── /set_budget ───────────────────────────────────────────────────────────
     if text == "SET BUDGET":
-        config = get_config()
+        config = get_user_config(chat_id)
         sb = config.get("stock_budget")
         cb = config.get("crypto_budget")
         sb_str = f"${sb}" if sb else "not set"
@@ -1870,7 +2029,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
         # "off" or "0" → clear both
         if raw in ("off", "0", "none", "clear"):
-            update_config_multi({"stock_budget": None, "crypto_budget": None})
+            update_user_config_multi(chat_id, {"stock_budget": None, "crypto_budget": None})
             return "✅ Budgets cleared — picks will show no allocation amounts."
 
         # Parse "stocks <n> crypto <n>" in any order, or just one bucket
@@ -1901,7 +2060,8 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 "/set_budget off"
             )
 
-        config = update_config_multi(updates)
+        config = update_user_config_multi(chat_id, updates)
+        global_cfg = get_config()
         lines = ["✅ <b>Budget updated:</b>"]
         if "stock_budget" in updates:
             v = config.get("stock_budget")
@@ -1912,12 +2072,83 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         # Show resulting per-pick amounts
         sb = config.get("stock_budget")
         cb = config.get("crypto_budget")
-        max_s = config.get("max_short_picks", 2) + config.get("max_long_picks", 3)
-        max_c = config.get("max_crypto_short_picks", 2) + config.get("max_crypto_long_picks", 2)
+        max_s = global_cfg.get("max_short_picks", 2) + global_cfg.get("max_long_picks", 3)
+        max_c = global_cfg.get("max_crypto_short_picks", 2) + global_cfg.get("max_crypto_long_picks", 2)
         if sb:
             lines.append(f"<i>→ ${round(sb/max_s,2)}/pick across {max_s} stock slots</i>")
         if cb:
             lines.append(f"<i>→ ${round(cb/max_c,2)}/pick across {max_c} crypto slots</i>")
+        return "\n".join(lines)
+
+    # ── /set_picks ────────────────────────────────────────────────────────────
+    if text == "SET PICKS":
+        config = get_user_config(chat_id)
+        ms = config.get("max_stock_picks")
+        mc = config.get("max_crypto_picks")
+        ms_str = str(ms) if ms else "all (default)"
+        mc_str = str(mc) if mc else "all (default)"
+        return (
+            f"📊 <b>Pick limits</b>\n"
+            f"Stocks: <b>{ms_str}</b>\n"
+            f"Crypto: <b>{mc_str}</b>\n\n"
+            f"<i>To update:</i>\n"
+            f"/set_picks stocks 3 crypto 1\n"
+            f"/set_picks stocks 5\n"
+            f"/set_picks off  — show all picks (default)"
+        )
+
+    if text.startswith("SET PICKS "):
+        import re
+        raw = text[len("SET PICKS "):].strip().lower()
+
+        # "off" / "all" / "reset" → clear both caps
+        if raw in ("off", "all", "reset", "none", "clear"):
+            update_user_config_multi(chat_id, {"max_stock_picks": None, "max_crypto_picks": None})
+            return "✅ Pick limits cleared — you'll see all picks."
+
+        # Strict parse: "stocks N", "crypto N", or both
+        updates = {}
+        for match in re.finditer(r"(stocks?|crypto)\s+(\d+)", raw):
+            key = "max_stock_picks" if match.group(1).startswith("stock") else "max_crypto_picks"
+            updates[key] = max(1, int(match.group(2)))
+
+        if not updates:
+            # NL fallback via Haiku
+            try:
+                import anthropic as _ant, json as _j
+                prompt = (
+                    f'Parse "{raw}" into pick limits for a stock bot. '
+                    'Return ONLY JSON with optional keys "max_stock_picks" and "max_crypto_picks" as integers. '
+                    'Examples: "3 stocks 2 crypto"→{"max_stock_picks":3,"max_crypto_picks":2}, '
+                    '"show me 4 stocks"→{"max_stock_picks":4}, "just 1 crypto"→{"max_crypto_picks":1}. '
+                    'If unclear return {}.'
+                )
+                client  = _ant.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+                msg     = client.messages.create(
+                    model="claude-haiku-4-5-20251001", max_tokens=60,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                updates = _j.loads(msg.content[0].text.strip())
+                updates = {k: max(1, int(v)) for k, v in updates.items()
+                           if k in ("max_stock_picks", "max_crypto_picks")}
+            except Exception:
+                pass
+
+        if not updates:
+            return (
+                "🤔 Try:\n"
+                "/set_picks stocks 3 crypto 1\n"
+                "/set_picks stocks 5\n"
+                "/set_picks off"
+            )
+
+        config = update_user_config_multi(chat_id, updates)
+        lines = ["✅ <b>Pick limits updated:</b>"]
+        if "max_stock_picks" in updates:
+            lines.append(f"Stocks → max <b>{updates['max_stock_picks']}</b> picks")
+        if "max_crypto_picks" in updates:
+            lines.append(f"Crypto → max <b>{updates['max_crypto_picks']}</b> picks")
+        lines.append("<i>Takes effect on tomorrow's briefing.</i>")
         return "\n".join(lines)
 
     # ── /bought [TICKER|name [price] [shares]] ───────────────────────────────
@@ -1992,9 +2223,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     # ── /history — date-wise transaction log ─────────────────────────────────
     if text == "HISTORY":
-        from config_manager import load_trade_log
-
-        log         = load_trade_log()
+        log         = load_user_trade_log(chat_id)
         open_trades = log.get("open", [])
         closed      = log.get("closed", [])
 
@@ -2070,9 +2299,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
     # ── /cancel — undo accidental /bought or /sold ───────────────────────────
     if text == "CANCEL":
         # Show recent transactions as tappable buttons instead of prompting for ticker
-        from config_manager import load_trade_log
-
-        log         = load_trade_log()
+        log         = load_user_trade_log(chat_id)
         open_trades = log.get("open", [])
         closed      = log.get("closed", [])
 
@@ -2107,7 +2334,6 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     if text.startswith("CANCEL "):
         from trade_logger import cancel_trade, reopen_trade
-        from config_manager import load_trade_log
 
         name_raw   = text.split(None, 1)[1].strip()
         candidates = _resolve_ticker_candidates(name_raw)
@@ -2124,7 +2350,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             return ""
 
         ticker = candidates[0]["ticker"]
-        log    = load_trade_log()
+        log    = load_user_trade_log(chat_id)
         has_open   = any(t["ticker"] == ticker for t in log.get("open", []))
         has_closed = any(t["ticker"] == ticker for t in log.get("closed", []))
 
@@ -2180,10 +2406,9 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
 
     # ── /positions / /portfolio ───────────────────────────────────────────────
     if text in ("POSITIONS", "PORTFOLIO"):
-        from config_manager import load_trade_log
         import yfinance as yf
 
-        log  = load_trade_log()
+        log  = load_user_trade_log(chat_id)
         open_trades = log.get("open", [])
         if not open_trades:
             return "📭 No open positions. Use <code>/bought AAPL 182.50</code> to log a trade."
@@ -2322,7 +2547,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         return "\n".join(lines)
 
     # ── Natural language fallback ─────────────────────────────────────────────
-    return _handle_natural_language(original or text)
+    return _handle_natural_language(original or text, chat_id=chat_id)
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────
