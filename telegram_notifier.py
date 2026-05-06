@@ -238,7 +238,7 @@ def handle_incoming_command(message_text: str, chat_id: str | None = None) -> st
                 )
             else:
                 send_message(
-                    "👋 <b>Welcome to Stockwise!</b>\n\n"
+                    "👋 <b>Welcome to Stockpulz!</b>\n\n"
                     "Send /start to request access.",
                     chat_id=chat_id,
                 )
@@ -1512,17 +1512,18 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 timeout=5,
             ).json()
             username = resp.get("result", {}).get("username", "")
-            bot_link = f"https://t.me/{username}?start=ref" if username else "https://t.me/Stockwise?start=ref"
+            bot_link = f"https://t.me/{username}?start=ref" if username else "https://t.me/Stockpulz?start=ref"
         except Exception:
-            bot_link = "https://t.me/Stockwise?start=ref"
+            bot_link = "https://t.me/Stockpulz?start=ref"
 
         return (
-            f"📲 <b>Share Stockwise with friends:</b>\n\n"
-            f"Hey! I'm using Stockwise — a personal AI stock advisor that sends daily stock &amp; crypto picks, "
+            f"📲 <b>Share Stockpulz with friends:</b>\n\n"
+            f"Hey! I'm using Stockpulz — a personal AI stock advisor that sends daily stock &amp; crypto picks, "
             f"price alerts, and weekly performance recaps.\n\n"
-            f"Join here 👇\n"
+            f"🌐 Learn more: <a href=\"https://stockpulz.com\">stockpulz.com</a>\n\n"
+            f"📱 Join on Telegram 👇\n"
             f"{bot_link}\n\n"
-            f"<i>(Tap the link to open Stockwise directly in Telegram)</i>"
+            f"<i>(Tap the Telegram link to request access)</i>"
         )
 
     # ── /start (also handles deep link: /start ref) ───────────────────────────
@@ -1530,7 +1531,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         # Known user — show welcome back
         if _is_admin(chat_id) or chat_id in get_allowed_users():
             return (
-                "👋 <b>Welcome back to Stockwise!</b>\n\n"
+                "👋 <b>Welcome back to Stockpulz!</b>\n\n"
                 "/today — today's picks\n"
                 "/positions — your open trades\n"
                 "/help — all commands\n\n"
@@ -1573,10 +1574,10 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
                 chat_id=owner,
             )
         return (
-            "👋 <b>Welcome to Stockwise!</b>\n\n"
+            "👋 <b>Welcome to Stockpulz!</b>\n\n"
             "Your access request has been sent to the admin.\n"
             "You'll receive a notification as soon as you're approved — usually within a few hours.\n\n"
-            "<i>Stockwise sends daily AI-curated stock &amp; crypto picks, price alerts, and weekly performance recaps.</i>"
+            "<i>Stockpulz sends daily AI-curated stock &amp; crypto picks, price alerts, and weekly performance recaps.</i>"
         )
 
     # ── Admin: user management ────────────────────────────────────────────────
@@ -1600,7 +1601,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             except Exception:
                 pass
         send_message(
-            "✅ <b>You're in! Welcome to Stockwise.</b>\n\n"
+            "✅ <b>You're in! Welcome to Stockpulz.</b>\n\n"
             "You'll receive daily AI-curated stock &amp; crypto picks every morning.\n\n"
             "<b>Quick start:</b>\n"
             "/today — today's picks\n"
@@ -1720,7 +1721,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
             return "Usage: /broadcast Your message here"
         from config_manager import get_allowed_users
         recipients = [u for u in get_allowed_users() if u != chat_id]
-        msg = f"📢 <b>Stockwise Update</b>\n\n{_esc(body)}"
+        msg = f"📢 <b>Stockpulz Update</b>\n\n{_esc(body)}"
         sent = 0
         for uid in recipients:
             if send_message(msg, chat_id=uid):
@@ -1740,7 +1741,7 @@ def _parse_and_execute(text: str, original: str = "", chat_id: str | None = None
         from datetime import date as _date
         today = _date.today().strftime("%b %d, %Y")
         msg = (
-            f"🚀 <b>Stockwise — What's New</b>  <i>({today})</i>\n\n"
+            f"🚀 <b>Stockpulz — What's New</b>  <i>({today})</i>\n\n"
             f"{_esc(notes)}\n\n"
             f"<i>Questions? Just ask the bot.</i>"
         )

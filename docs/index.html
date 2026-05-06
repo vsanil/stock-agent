@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stockpulz — Daily Market Picks, Delivered</title>
+  <meta name="description" content="Get curated stock and crypto picks every morning with entry prices, targets, and stop losses. Powered by AI, delivered via Telegram." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f14;
+      --bg2: #13161e;
+      --bg3: #1a1e28;
+      --border: rgba(255,255,255,0.08);
+      --border-bright: rgba(255,255,255,0.14);
+      --text: #f0f2f5;
+      --muted: #8892a4;
+      --accent: #4f8ef7;
+      --accent-dim: rgba(79,142,247,0.12);
+      --accent-glow: rgba(79,142,247,0.25);
+      --green: #34d399;
+      --green-dim: rgba(52,211,153,0.12);
+      --amber: #fbbf24;
+      --amber-dim: rgba(251,191,36,0.1);
+      --red: #f87171;
+      --radius: 12px;
+      --radius-lg: 18px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    /* NAV */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      height: 60px;
+      background: rgba(13,15,20,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    .nav-logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #4f8ef7 0%, #34d399 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+    }
+
+    .nav-cta {
+      padding: 8px 20px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      transition: opacity 0.15s;
+    }
+    .nav-cta:hover { opacity: 0.88; }
+
+    /* HERO */
+    .hero {
+      text-align: center;
+      padding: 100px 2rem 80px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border-bright);
+      background: var(--bg2);
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+
+    .hero-badge span { color: var(--green); font-size: 8px; }
+
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 62px);
+      font-weight: 700;
+      line-height: 1.12;
+      letter-spacing: -1.5px;
+      margin-bottom: 22px;
+      color: var(--text);
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      background: linear-gradient(90deg, #4f8ef7, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 540px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+    }
+
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 14px 28px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:active { transform: scale(0.98); }
+
+    .btn-ghost {
+      padding: 14px 24px;
+      color: var(--muted);
+      font-size: 15px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--border-bright); color: var(--text); }
+
+    /* PREVIEW CARD */
+    .preview-wrap {
+      max-width: 500px;
+      margin: 70px auto 0;
+      padding: 0 1.5rem;
+    }
+
+    .tg-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .tg-header {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tg-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4f8ef7 0%, #34d399 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .tg-header-text strong { font-size: 14px; display: block; }
+    .tg-header-text span { font-size: 12px; color: var(--green); }
+
+    .tg-body { padding: 14px 16px; }
+
+    .tg-msg {
+      background: var(--bg3);
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 13.5px;
+      line-height: 1.65;
+    }
+
+    .tg-date {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+      margin-bottom: 10px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    .tg-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .tg-row:last-child { border-bottom: none; }
+
+    .tg-ticker { font-weight: 600; font-size: 13px; }
+    .tg-detail { font-size: 12px; color: var(--muted); }
+    .tg-pct { font-size: 12px; font-weight: 600; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .neu { color: var(--amber); }
+
+    .tg-section {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin: 12px 0 6px;
+    }
+
+    /* STATS STRIP */
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      max-width: 680px;
+      margin: 70px auto 0;
+      padding: 0 1.5rem;
+    }
+
+    .stat {
+      flex: 1;
+      text-align: center;
+      padding: 24px 16px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .stat:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+    .stat:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
+    .stat:not(:first-child):not(:last-child) { border-left: none; }
+
+    .stat-num { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .stat-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+    /* FEATURES */
+    .section {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 100px 2rem;
+    }
+
+    .section-label {
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      text-align: center;
+      font-size: clamp(26px, 4vw, 38px);
+      font-weight: 700;
+      letter-spacing: -0.8px;
+      margin-bottom: 14px;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 520px;
+      margin: 0 auto 60px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .feat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 26px 24px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .feat-card:hover { border-color: var(--border-bright); background: var(--bg3); }
+
+    .feat-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+    .feat-icon.blue { background: var(--accent-dim); }
+    .feat-icon.green { background: var(--green-dim); }
+    .feat-icon.amber { background: var(--amber-dim); }
+    .feat-icon.red { background: rgba(248,113,113,0.1); }
+    .feat-icon.purple { background: rgba(167,139,250,0.12); }
+    .feat-icon.teal { background: rgba(45,212,191,0.1); }
+
+    .feat-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+    .feat-card p { font-size: 14px; color: var(--muted); line-height: 1.65; }
+
+    /* HOW IT WORKS */
+    .how-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2px;
+      background: var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .how-step {
+      background: var(--bg2);
+      padding: 36px 28px;
+      position: relative;
+    }
+
+    .how-num {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .how-step h3 { font-size: 18px; font-weight: 600; margin-bottom: 10px; }
+    .how-step p { font-size: 14px; color: var(--muted); line-height: 1.65; }
+
+    .how-icon {
+      font-size: 32px;
+      margin-bottom: 18px;
+      display: block;
+    }
+
+    /* PICKS PREVIEW */
+    .picks-section {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .picks-inner {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 80px 2rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+
+    @media (max-width: 680px) {
+      .picks-inner { grid-template-columns: 1fr; }
+    }
+
+    .picks-text h2 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.6px;
+      margin-bottom: 16px;
+    }
+
+    .picks-text p { font-size: 16px; color: var(--muted); line-height: 1.7; margin-bottom: 12px; }
+
+    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+
+    .tag {
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid;
+    }
+    .tag.green { color: var(--green); border-color: rgba(52,211,153,0.3); background: var(--green-dim); }
+    .tag.blue { color: var(--accent); border-color: rgba(79,142,247,0.3); background: var(--accent-dim); }
+    .tag.amber { color: var(--amber); border-color: rgba(251,191,36,0.3); background: var(--amber-dim); }
+
+    .sample-picks {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .pick-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 13px 16px;
+    }
+
+    .pick-left { display: flex; flex-direction: column; gap: 2px; }
+    .pick-sym { font-weight: 700; font-size: 15px; }
+    .pick-name { font-size: 12px; color: var(--muted); }
+    .pick-right { text-align: right; }
+    .pick-target { font-size: 13px; font-weight: 600; color: var(--green); }
+    .pick-entry { font-size: 12px; color: var(--muted); }
+
+    /* CTA */
+    .cta-section {
+      text-align: center;
+      padding: 100px 2rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(28px, 5vw, 44px);
+      font-weight: 700;
+      letter-spacing: -0.8px;
+      margin-bottom: 16px;
+    }
+
+    .cta-section p {
+      font-size: 17px;
+      color: var(--muted);
+      margin-bottom: 36px;
+    }
+
+    /* FOOTER */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 2rem;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    footer span { color: var(--text); font-weight: 500; }
+
+    .disclaimer {
+      max-width: 600px;
+      margin: 8px auto 0;
+      font-size: 12px;
+      opacity: 0.6;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 500px) {
+      .stats { flex-direction: column; }
+      .stat { border-radius: 0 !important; border-left: 1px solid var(--border) !important; border-top: none !important; }
+      .stat:first-child { border-radius: var(--radius) var(--radius) 0 0 !important; border-top: 1px solid var(--border) !important; }
+      .stat:last-child { border-radius: 0 0 var(--radius) var(--radius) !important; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-brand">
+    <div class="nav-logo">📈</div>
+    Stockpulz
+  </div>
+  <a href="https://t.me/Stockpulz?start=ref" class="nav-cta">Join Free</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">
+    <span>●</span> Live daily picks · Stocks &amp; Crypto
+  </div>
+  <h1>Your edge in the<br/><em>market, every morning</em></h1>
+  <p>Curated picks with entry prices, profit targets, and stop losses — delivered straight to your Telegram before the bell.</p>
+  <div class="hero-actions">
+    <a href="https://t.me/Stockpulz?start=ref" class="btn-primary">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.28 13.398l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.868.16z"/></svg>
+      Join on Telegram
+    </a>
+    <a href="#how-it-works" class="btn-ghost">See how it works</a>
+  </div>
+</section>
+
+<!-- TELEGRAM PREVIEW -->
+<div class="preview-wrap">
+  <div class="tg-card">
+    <div class="tg-header">
+      <div class="tg-avatar">📈</div>
+      <div class="tg-header-text">
+        <strong>Stockpulz</strong>
+        <span>● Online</span>
+      </div>
+    </div>
+    <div class="tg-body">
+      <div class="tg-msg">
+        <div class="tg-date">Today's Picks · May 5</div>
+
+        <div class="tg-section">Stocks — Short Term</div>
+        <div class="tg-row">
+          <div>
+            <div class="tg-ticker">NVDA</div>
+            <div class="tg-detail">Entry $875 · Target $920</div>
+          </div>
+          <div class="tg-pct pos">+5.1%</div>
+        </div>
+        <div class="tg-row">
+          <div>
+            <div class="tg-ticker">MSFT</div>
+            <div class="tg-detail">Entry $418 · Target $445</div>
+          </div>
+          <div class="tg-pct pos">+6.5%</div>
+        </div>
+
+        <div class="tg-section">Crypto — Short Term</div>
+        <div class="tg-row">
+          <div>
+            <div class="tg-ticker">BTC</div>
+            <div class="tg-detail">Entry $96,200 · Target $102,000</div>
+          </div>
+          <div class="tg-pct pos">+6.0%</div>
+        </div>
+        <div class="tg-row">
+          <div>
+            <div class="tg-ticker">SOL</div>
+            <div class="tg-detail">Entry $148 · Target $162</div>
+          </div>
+          <div class="tg-pct neu">+9.5%</div>
+        </div>
+
+        <div class="tg-section" style="margin-top:14px; color: #8892a4; font-size: 11px;">⚠️ Not financial advice · /help · /share</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-num" style="color: var(--accent);">9:30</div>
+    <div class="stat-label">AM delivery daily</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--green);">2–5</div>
+    <div class="stat-label">picks per day</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--amber);">Free</div>
+    <div class="stat-label">invite-only access</div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section class="section" id="features">
+  <div class="section-label">Features</div>
+  <h2 class="section-title">Everything you need to trade smarter</h2>
+  <p class="section-sub">No noise. Just actionable picks with context, delivered on time, every day.</p>
+
+  <div class="features-grid">
+    <div class="feat-card">
+      <div class="feat-icon blue">📊</div>
+      <h3>Daily stock picks</h3>
+      <p>Short-term and long-term stock picks with entry, target, and stop-loss levels — every morning before market open.</p>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon amber">₿</div>
+      <h3>Crypto coverage</h3>
+      <p>Bitcoin, Ethereum, Solana, and emerging altcoins. Toggle crypto on or off anytime with <code style="font-size:12px; background:rgba(255,255,255,0.07); padding:1px 5px; border-radius:4px;">/crypto on</code>.</p>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon green">✅</div>
+      <h3>10:30 AM confirmation</h3>
+      <p>After market open, get a confirmation update with current prices versus entry levels so you know what to do with each pick.</p>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon teal">📅</div>
+      <h3>Weekly recap</h3>
+      <p>Every Sunday, see the week's picks ranked by performance with win/loss stats and a forward-looking market note.</p>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon purple">🎮</div>
+      <h3>Paper trading mode</h3>
+      <p>Follow picks in a simulated portfolio. Track P&amp;L without risking real money — great for building conviction.</p>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon red">🚨</div>
+      <h3>Instant alerts</h3>
+      <p>Admin broadcast feature delivers breaking market news and updates directly to all subscribers in real time.</p>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="section" id="how-it-works" style="padding-top: 0;">
+  <div class="section-label">How it works</div>
+  <h2 class="section-title">Up and running in 3 steps</h2>
+  <p class="section-sub">No apps to download, no accounts to create. Just Telegram.</p>
+
+  <div class="how-grid">
+    <div class="how-step">
+      <div class="how-num">Step 01</div>
+      <span class="how-icon">🔗</span>
+      <h3>Request access</h3>
+      <p>Tap the invite link and send <code style="font-size:12px; background:rgba(255,255,255,0.07); padding:1px 5px; border-radius:4px;">/start</code> in Telegram. Your request is sent to the admin for approval.</p>
+    </div>
+    <div class="how-step">
+      <div class="how-num">Step 02</div>
+      <span class="how-icon">✅</span>
+      <h3>Get approved</h3>
+      <p>Once approved, you instantly receive today's picks. No waiting until tomorrow — you're in from the moment access is granted.</p>
+    </div>
+    <div class="how-step">
+      <div class="how-num">Step 03</div>
+      <span class="how-icon">📬</span>
+      <h3>Receive daily picks</h3>
+      <p>Every morning at 9:30 AM, Stockpulz drops curated picks in your Telegram. Check the 10:30 AM confirmation and make your move.</p>
+    </div>
+  </div>
+</section>
+
+<!-- PICKS SECTION -->
+<section class="picks-section">
+  <div class="picks-inner">
+    <div class="picks-text">
+      <h2>Clear signals, not just data</h2>
+      <p>Every pick comes with a clear entry zone, a realistic price target, and a stop-loss level. No guessing, no homework required.</p>
+      <p>Picks are split by time horizon — short-term catalysts and long-term position ideas — so you can match them to your own style.</p>
+      <div class="tag-list">
+        <span class="tag green">Entry price</span>
+        <span class="tag blue">Profit target</span>
+        <span class="tag amber">Stop loss</span>
+        <span class="tag green">Short &amp; long term</span>
+        <span class="tag blue">Stocks &amp; crypto</span>
+      </div>
+    </div>
+    <div class="sample-picks">
+      <div class="pick-row">
+        <div class="pick-left">
+          <span class="pick-sym">AAPL</span>
+          <span class="pick-name">Apple Inc.</span>
+        </div>
+        <div class="pick-right">
+          <div class="pick-target">Target $210</div>
+          <div class="pick-entry">Entry $192 · Stop $184</div>
+        </div>
+      </div>
+      <div class="pick-row">
+        <div class="pick-left">
+          <span class="pick-sym">ETH</span>
+          <span class="pick-name">Ethereum</span>
+        </div>
+        <div class="pick-right">
+          <div class="pick-target">Target $2,150</div>
+          <div class="pick-entry">Entry $1,950 · Stop $1,820</div>
+        </div>
+      </div>
+      <div class="pick-row">
+        <div class="pick-left">
+          <span class="pick-sym">META</span>
+          <span class="pick-name">Meta Platforms</span>
+        </div>
+        <div class="pick-right">
+          <div class="pick-target">Target $585</div>
+          <div class="pick-entry">Entry $540 · Stop $515</div>
+        </div>
+      </div>
+      <div class="pick-row">
+        <div class="pick-left">
+          <span class="pick-sym">SOL</span>
+          <span class="pick-name">Solana</span>
+        </div>
+        <div class="pick-right">
+          <div class="pick-target">Target $162</div>
+          <div class="pick-entry">Entry $148 · Stop $138</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2>Start your first<br/>trading morning</h2>
+  <p>Join Stockpulz and get today's picks delivered before the market opens — completely free, invite-only.</p>
+  <a href="https://t.me/Stockpulz?start=ref" class="btn-primary" style="font-size: 17px; padding: 16px 36px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.28 13.398l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.868.16z"/></svg>
+    Join Stockpulz on Telegram
+  </a>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div><span>Stockpulz</span> — Daily market picks, delivered.</div>
+  <div class="disclaimer">This is not financial advice. All picks are for informational purposes only. Past performance does not guarantee future results. Invest at your own risk.</div>
+</footer>
+
+</body>
+</html>

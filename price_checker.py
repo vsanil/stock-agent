@@ -53,21 +53,42 @@ def get_current_prices(picks: dict) -> dict:
     stocks = picks.get("stocks", picks)
     crypto = picks.get("crypto", {})
 
-    # ── Stock prices via yfinance ─────────────────────────────────────────────
+    # ── Stock prices via yfinance (1-min intraday — avoids stale close cache) ──
     stock_tickers = set()
     for section in ("short_term", "long_term"):
         for s in stocks.get(section, []):
             if s.get("ticker"):
                 stock_tickers.add(s["ticker"])
 
-    for ticker in stock_tickers:
+    if stock_tickers:
         try:
-            data  = yf.Ticker(ticker).fast_info
-            price = getattr(data, "last_price", None) or getattr(data, "regular_market_price", None)
-            if price:
-                prices[ticker] = round(float(price), 2)
+            # Bulk download is faster and avoids per-ticker rate limits
+            raw = yf.download(
+                " ".join(stock_tickers), period="1d", interval="1m",
+                progress=False, auto_adjust=True,
+            )
+            close = raw["Close"] if "Close" in raw else raw
+            if len(stock_tickers) == 1:
+                ticker = next(iter(stock_tickers))
+                last = close.dropna().iloc[-1] if not close.empty else None
+                if last is not None:
+                    prices[ticker] = round(float(last), 2)
+            else:
+                for ticker in stock_tickers:
+                    try:
+                        last = close[ticker].dropna().iloc[-1]
+                        prices[ticker] = round(float(last), 2)
+                    except Exception:
+                        pass
         except Exception as exc:
-            print(f"[price_checker] Could not fetch {ticker}: {exc}")
+            print(f"[price_checker] yfinance bulk download failed ({exc}), trying per-ticker...")
+            for ticker in stock_tickers:
+                try:
+                    hist  = yf.Ticker(ticker).history(period="1d", interval="1m")
+                    if not hist.empty:
+                        prices[ticker] = round(float(hist["Close"].iloc[-1]), 2)
+                except Exception as e2:
+                    print(f"[price_checker] Could not fetch {ticker}: {e2}")
 
     # ── Crypto prices via CoinGecko (one bulk call) ───────────────────────────
     # Build symbol→id map from picks, filling any gaps with the fallback table
